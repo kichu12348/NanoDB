@@ -7,6 +7,7 @@ import (
 	"nanodb/internal/index"
 	"nanodb/internal/record"
 	"nanodb/internal/storage"
+	"sync"
 )
 
 type Collection struct {
@@ -15,6 +16,7 @@ type Collection struct {
 	Pager    *storage.Pager
 	Header   *storage.DBHeader
 	Index    index.Index
+	mu       sync.RWMutex
 }
 
 func NewCollection(name string, root uint32, pager *storage.Pager, header *storage.DBHeader) (*Collection, error) {
@@ -45,6 +47,8 @@ func GenerateRandomId(n int) uint64 {
 }
 
 func (c *Collection) Insert(doc map[string]any) (uint64, error) {
+	c.mu.Lock()         // lock for writing
+	defer c.mu.Unlock() // unlock after function ends
 	docId := GenerateRandomId(8)
 
 	doc["_id"] = docId
@@ -116,6 +120,8 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 }
 
 func (c *Collection) FindById(docId uint64) (map[string]any, error) {
+	c.mu.RLock()         // lock for reading
+	defer c.mu.RUnlock() // unlock after function ends
 	loc, exists := c.Index[docId]
 
 	if !exists {
@@ -131,10 +137,110 @@ func (c *Collection) FindById(docId uint64) (map[string]any, error) {
 	_, data := record.ReadRecord(pageData, loc.Slot)
 
 	doc, err := record.DecodeDoc(data)
-	fmt.Println(doc)
 	if err != nil {
 		return nil, err
 	}
 
 	return doc, nil
+}
+
+func (c *Collection) Update(id uint64, newData map[string]any) error {
+	c.mu.Lock()         // lock for writing
+	defer c.mu.Unlock() // unlock after function ends
+	if _, exists := c.Index[id]; !exists {
+		return fmt.Errorf("document with ID %d does not exist", id)
+	}
+
+	newData["_id"] = id
+
+	//serialize new data
+	data, err := record.EncodeDoc(newData)
+	if err != nil {
+		return err
+	}
+
+	currPageId := c.RootPage
+
+	for {
+		pageData, err := c.Pager.ReadPage(currPageId)
+		if err != nil {
+			return err
+		}
+
+		success, err := record.InsertRecord(pageData, id, data)
+		if err != nil {
+			return err
+		}
+		//if update successful, write back and update index
+		if success {
+			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+			c.Index[id] = index.DocLocation{Page: currPageId, Slot: slotCount - 1}
+			return c.Pager.WritePage(currPageId, pageData)
+		}
+
+		// move to next page if update failed
+		nextPage := binary.LittleEndian.Uint32(pageData[4:8])
+
+		if nextPage != 0 {
+			currPageId = nextPage
+			continue
+		}
+
+		// allocate new page if no next page
+		newPageId, err := storage.AllocatePage(c.Pager, c.Header)
+		if err != nil {
+			return err
+		}
+
+		newPageData := make([]byte, storage.PageSize)
+		storage.InitDataPage(newPageData)
+		if err := c.Pager.WritePage(newPageId, newPageData); err != nil {
+			return err
+		}
+
+		// link old page to new page
+		binary.LittleEndian.PutUint32(pageData[4:8], newPageId)
+		if err := c.Pager.WritePage(currPageId, pageData); err != nil {
+			return err
+		}
+		currPageId = newPageId
+	}
+}
+
+func (c *Collection) Delete(id uint64) error {
+	_, exists := c.Index[id]
+	if !exists {
+		return fmt.Errorf("document with ID %d does not exist", id)
+	}
+
+	delete(c.Index, id)
+	return nil
+}
+
+func (c *Collection) Scan() ([]map[string]any, error) {
+	var results []map[string]any
+
+	currentPageId := c.RootPage
+	for currentPageId != 0 {
+		pageData, err := c.Pager.ReadPage(currentPageId)
+
+		if err != nil {
+			return nil, err
+		}
+
+		slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+
+		for slot := range slotCount {
+
+			_, data := record.ReadRecord(pageData, slot)
+			doc, err := record.DecodeDoc(data)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, doc)
+		}
+		currentPageId = binary.LittleEndian.Uint32(pageData[4:8])
+	}
+
+	return results, nil
 }

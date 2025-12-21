@@ -2,6 +2,7 @@ package record
 
 import (
 	"encoding/binary"
+	"nanodb/internal/storage"
 
 	"github.com/vmihailenco/msgpack/v5"
 )
@@ -63,7 +64,7 @@ func InsertRecord(
 	copy(page[recordOffset+12:], data)
 
 	//write slot
-	slotOffset := 8 + slotCount*4                // each slot is 4 bytes and header is 6 bytes [slotCount (2 bytes) + freeStart (2 bytes) + nextPage (4 bytes)]
+	slotOffset := 8 + slotCount*4                // each slot is 4 bytes and header is 8 bytes [slotCount (2 bytes) + freeStart (2 bytes) + nextPage (4 bytes)]
 	writeUint16(page[slotOffset:], recordOffset) // [offset (2 bytes) + length (2 bytes)]
 	writeUint16(page[slotOffset+2:], recordSize)
 
@@ -103,4 +104,28 @@ func DecodeCollectionEntry(data []byte) CollectionEntry {
 	name := string(data[1 : 1+nameLen])
 	root := binary.LittleEndian.Uint32(data[1+nameLen:])
 	return CollectionEntry{name, root}
+}
+
+func GetAllCollections(p *storage.Pager) ([]CollectionEntry, error) {
+
+	pageData, err := p.ReadPage(1)
+	if err != nil {
+		return nil, err
+	}
+
+	slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+
+	var collections []CollectionEntry
+
+	for slot := range slotCount {
+		// 1. Read the Record
+		_, data := ReadRecord(pageData, slot)
+
+		// 2. Decode the specific CollectionEntry format
+		// [NameLen (1)] [Name] [RootPage (4)]
+		entry := DecodeCollectionEntry(data)
+		collections = append(collections, entry)
+	}
+
+	return collections, nil
 }

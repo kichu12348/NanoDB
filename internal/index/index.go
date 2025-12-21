@@ -2,7 +2,6 @@ package index
 
 import (
 	"encoding/binary"
-	"fmt"
 	"nanodb/internal/storage"
 )
 
@@ -17,8 +16,6 @@ func BuildIndex(p *storage.Pager, root uint32) (Index, error) {
 	index := make(Index)
 	pageNum := root
 
-	fmt.Println("Building index starting at page", root)
-
 	for pageNum != 0 {
 		page, err := p.ReadPage(pageNum)
 		if err != nil {
@@ -26,8 +23,6 @@ func BuildIndex(p *storage.Pager, root uint32) (Index, error) {
 		}
 
 		slotCount := binary.LittleEndian.Uint16(page[0:2])
-
-		fmt.Printf("Indexing page %d with %d slots\n", pageNum, slotCount)
 
 		for slot := range slotCount {
 			offset := binary.LittleEndian.Uint16(page[4+slot*4 : 6+slot*4])
@@ -38,8 +33,6 @@ func BuildIndex(p *storage.Pager, root uint32) (Index, error) {
 			}
 
 			docId := binary.LittleEndian.Uint64(page[offset:])
-
-			fmt.Printf("Indexing docId %d at page %d slot %d\n", docId, pageNum, slot)
 
 			index[docId] = DocLocation{Page: pageNum, Slot: slot}
 		}

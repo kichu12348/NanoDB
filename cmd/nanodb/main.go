@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"nanodb/internal/collection"
 	"nanodb/internal/record"
@@ -9,97 +10,148 @@ import (
 )
 
 func main() {
-	// Clean restart
-	//os.Remove("test.db")
+	dbFile := "test.db"
 
-	// 1. Low-Level Init
-	p, err := storage.OpenPager("test.db")
+	// 1. Check if DB exists
+	_, err := os.Stat(dbFile)
+	dbExists := !os.IsNotExist(err)
+
+	p, err := storage.OpenPager(dbFile)
 	if err != nil {
 		panic(err)
 	}
 	defer p.Close()
 
-	// 2. Initialize Headers
-	// We need to create a default header since it's a new file
-	h := &storage.DBHeader{
-		Magic:     [4]byte{'A', 'A', 'M', 'N'},
-		Version:   1,
-		PageSize:  storage.PageSize,
-		PageCount: 1, // Page 0 is header
+	var h *storage.DBHeader
+	var userRootPage uint32
+
+	if !dbExists {
+		// --- BOOTSTRAP MODE (Run once) ---
+		//fmt.Println("Initializing new database...")
+
+		// A. Write Header
+		h = &storage.DBHeader{
+			Magic:     [4]byte{'A', 'A', 'M', 'N'},
+			Version:   1,
+			PageSize:  storage.PageSize,
+			PageCount: 1,
+		}
+		storage.WriteHeader(p, h)
+
+		// B. Allocate Catalog (Page 1)
+		catalogPage, _ := storage.AllocatePage(p, h)
+		rawCatalog := make([]byte, storage.PageSize)
+		storage.InitDataPage(rawCatalog) // Wipes page to be safe
+		p.WritePage(catalogPage, rawCatalog)
+
+		// C. Allocate Users Collection (Page 2)
+		userRootPage, _ = storage.AllocatePage(p, h)
+		rawUserPage := make([]byte, storage.PageSize)
+		storage.InitDataPage(rawUserPage) // Wipes page to be safe
+		p.WritePage(userRootPage, rawUserPage)
+
+		// D. Register "users" in Catalog
+		metaEntry := record.EncodeCollectionEntry("users", userRootPage)
+		record.InsertRecord(rawCatalog, 0, metaEntry)
+		p.WritePage(catalogPage, rawCatalog)
+
+	} else {
+		// --- LOAD MODE (Run on restart) ---
+		//fmt.Println("Loading existing database...")
+
+		// A. Read Header
+		h, err = storage.ReadHeader(p)
+		if err != nil {
+			panic(err)
+		}
+
+		// B. Read Catalog to find "users" root page
+		// (For now, we know it's Page 2 because we built it that way,
+		// but in the future you should search Page 1 for name="users")
+		userRootPage = 2
 	}
-	storage.WriteHeader(p, h)
 
-	// create catalog page which will hold all collections
-	catalogPage, err := storage.AllocatePage(p, h)
-	if err != nil {
-		panic(err)
-	}
-
-	//initialize catalog page
-	rawCatalogPage := make([]byte, storage.PageSize)
-	storage.InitDataPage(rawCatalogPage)
-	p.WritePage(catalogPage, rawCatalogPage)
-
-	// 3. Create Root Page for our collection page 2
-	userRootPage, err := storage.AllocatePage(p, h)
-	if err != nil {
-		panic(err)
-	}
-
-	metaEntry := record.EncodeCollectionEntry("users", userRootPage)
-
-	//write collection entry to catalog page
-	catalogData, err := p.ReadPage(catalogPage)
-	if err != nil {
-		panic(err)
-	}
-	record.InsertRecord(catalogData, 0, metaEntry)
-	p.WritePage(catalogPage, catalogData)
-
-	// Initialize root page
-	rawPage := make([]byte, storage.PageSize)
-	storage.InitDataPage(rawPage)
-	p.WritePage(userRootPage, rawPage)
-
-	// 4. Create High-Level Collection
+	// 4. Create Collection Wrapper
+	// Now this will read the EXISTING pages instead of wiping them
 	users, err := collection.NewCollection("users", userRootPage, p, h)
-	if err != nil {
-		panic(err)
-	}
-
-	// 5. STRESS TEST: Insert 100 users
-	// A page is 4096 bytes. Each user is ~50 bytes.
-	// 100 users = ~5000 bytes. This GUARANTEES we need at least 2 pages.
-	//fmt.Println("Starting insert loop...")
-
-	//for i := range 10 {
-	// user := map[string]any{
-	// 	"id":    i,
-	// 	"name":  fmt.Sprintf("User %d", i),
-	// 	"email": fmt.Sprintf("rmaha%d@example.com", i),
-	// }
-
-	// _, err := users.Insert(user)
 	// if err != nil {
 	// 	panic(err)
 	// }
-	//fmt.Printf("Inserted user %d with docId %d\n", i, docId)
 
-	// doc, err := users.FindById(docId)
+	// 5. Query Test
+	// Try to find the document you inserted last time
+	//fmt.Println("Attempting to find existing record...")
+
+	// Replace with a known ID from your previous run
+	// doc, err := users.FindById(2095559075886514214)
 	// if err != nil {
 	// 	panic(err)
 	// }
-	//fmt.Printf("Verified inserted document: %+v\n", doc)
-	//}
 
-	//find doc by id
-	doc, err := users.FindById(16264638516676103845)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Printf("Found document with id 42: %+v\n", doc)
+	// if doc == nil {
+	// 	fmt.Println("Document not found (Did you insert it?)")
+	// } else {
+	// 	fmt.Printf("Found document: %+v\n", doc)
+	// }
 
-	// Check file size to prove it grew
+	// Optional: Insert new data to prove we append, not overwrite
+	// for i := range 3 {
+	// 	newDoc := map[string]any{
+	// 		"name": fmt.Sprintf("User%d", i),
+	// 		"age":  20 + i,
+	// 	}
+	// 	newId, err := users.Insert(newDoc)
+	// 	if err != nil {
+	// 		panic(err)
+	// 	}
+	// 	fmt.Printf("Inserted new document with _id=%d\n", newId)
+	// }
 
-	//fmt.Printf("Database size: %d bytes (Should be > 8192)\n", stat.Size())
+	// 2. Read it back
+	// oldDoc, _ := users.FindById(2095559075886514214)
+	// fmt.Printf("Before Update: %+v\n", oldDoc)
+
+	// // 3. Update it
+	// fmt.Println("Updating user 500...")
+	// users.Update(2095559075886514214, map[string]any{
+	// 	"name": "New Name",
+	// 	"role": "CEO",
+	// })
+
+	// // 4. Read it back AGAIN
+	// newDoc, _ := users.FindById(2095559075886514214)
+	// fmt.Printf("After Update: %+v\n", newDoc)
+
+	//open catalog collection
+	// cat, err := collection.NewCollection("_catalog", 1, p, h)
+	// if err != nil {
+	// 	panic(err)
+	// }
+
+	//record, _ := record.GetAllCollections(p)
+
+	fmt.Println(users.Scan())
+
+	//fmt.Println("--- STARTING CONCURRENCY TEST ---")
+
+	//var wg sync.WaitGroup // Waits for threads to finish
+
+	// Launch 100 concurrent writers
+	// for i := 0; i < 100; i++ {
+	// 	wg.Add(1)
+	// 	go func(id int) {
+	// 		defer wg.Done()
+
+	// 		// Each thread inserts a user
+	// 		doc := map[string]any{
+	// 			"name": fmt.Sprintf("Concurrent_User_%d", id),
+	// 		}
+	// 		users.Insert(doc)
+	// 		// fmt.Printf("Thread %d finished\n", id)
+	// 	}(i)
+	// }
+
+	// fmt.Println("Waiting for threads...")
+	// wg.Wait() // Blocks until all 100 threads are done
+	// fmt.Println("All threads finished safely!")
 }
