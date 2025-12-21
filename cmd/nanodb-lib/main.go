@@ -6,6 +6,7 @@ package main
 import "C"
 
 import (
+	"encoding/json"
 	"sync"
 	"unsafe"
 
@@ -20,8 +21,8 @@ var (
 	pager           *storage.Pager
 	header          *storage.DBHeader
 
-	catalog *collection.Collection
-	mu      sync.Mutex
+	catalog  *collection.Collection
+	globalMu sync.RWMutex
 )
 
 //export NanoInit
@@ -34,7 +35,6 @@ func NanoInit(path *C.char) {
 	}
 	pager = p
 
-	// Read header
 	h, err := storage.ReadHeader(pager)
 	if err != nil {
 		h = &storage.DBHeader{
@@ -45,10 +45,9 @@ func NanoInit(path *C.char) {
 		}
 		storage.WriteHeader(pager, h)
 
-		// Allocate Catalog (Page 1)
 		catalogPage, _ := storage.AllocatePage(pager, h)
 		rawCatalog := make([]byte, storage.PageSize)
-		storage.InitDataPage(rawCatalog) // Wipes page to be safe
+		storage.InitDataPage(rawCatalog)
 		pager.WritePage(catalogPage, rawCatalog)
 
 	}
@@ -66,8 +65,8 @@ func NanoInit(path *C.char) {
 }
 
 func loadExistingCollections() {
-	mu.Lock()
-	defer mu.Unlock()
+	globalMu.Lock()
+	defer globalMu.Unlock()
 	collections, err := record.GetAllCollections(pager)
 
 	if err != nil {
@@ -83,19 +82,165 @@ func loadExistingCollections() {
 	}
 }
 
+//export NanoCreateCollection
+func NanoCreateCollection(colName *C.char) C.longlong {
+	// TODO tmrw
+	return 1
+}
+
 //export NanoInsert
-// func NanoInsert(jsonStr *C.char) C.longlong {
+func NanoInsert(colName *C.char, jsonStr *C.char) C.longlong {
 
-// }
+	globalMu.RLock()
+	cName := C.GoString(colName)
 
-// //export NanoFind
-// func NanoFind(id C.longlong) *C.char {
+	col, ok := openCollections[cName]
+	globalMu.RUnlock()
 
-// }
+	if !ok {
+		return -1
+	}
+	data := C.GoString(jsonStr)
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(data), &doc); err != nil {
+		return -1
+	}
+
+	docId, err := col.Insert(doc)
+
+	if err != nil {
+		return -1
+	}
+
+	return C.longlong(docId)
+}
+
+//export NanoInsertMany
+func NanoInsertMany(colName *C.char, jsonStr *C.char) *C.char {
+	globalMu.RLock()
+	cName := C.GoString(colName)
+
+	col, ok := openCollections[cName]
+	globalMu.RUnlock()
+
+	if !ok {
+		return nil
+	}
+	data := C.GoString(jsonStr)
+	var docs []map[string]any
+	if err := json.Unmarshal([]byte(data), &docs); err != nil {
+		return nil
+	}
+
+	var docIds []uint64
+
+	for _, doc := range docs {
+		docId, err := col.Insert(doc)
+
+		if err != nil {
+			break
+		}
+		docIds = append(docIds, docId)
+	}
+
+	bytes, _ := json.Marshal(docIds)
+	return C.CString(string(bytes))
+}
+
+//export NanoFind
+func NanoFind(colName *C.char, queryJson *C.char) *C.char {
+	globalMu.RLock()
+	cName := C.GoString(colName)
+	col, ok := openCollections[cName]
+	globalMu.RUnlock()
+
+	if !ok {
+		return nil
+	}
+	qStr := C.GoString(queryJson)
+
+	var query map[string]any
+	if err := json.Unmarshal([]byte(qStr), &query); err != nil {
+		return nil
+	}
+
+	docs, err := col.Find(query)
+	if err != nil {
+		return nil
+	}
+	bytes, _ := json.Marshal(docs)
+	return C.CString(string(bytes))
+}
+
+//export NanoFindOne
+func NanoFindOne(colName *C.char, queryJson *C.char) *C.char {
+	globalMu.RLock()
+	cName := C.GoString(colName)
+	col, ok := openCollections[cName]
+	globalMu.RUnlock()
+
+	if !ok {
+		return nil
+	}
+	qStr := C.GoString(queryJson)
+
+	var query map[string]any
+	if err := json.Unmarshal([]byte(qStr), &query); err != nil {
+		return nil
+	}
+
+	doc, err := col.Find(query)
+	if err != nil {
+		return nil
+	}
+	bytes, _ := json.Marshal(doc)
+	return C.CString(string(bytes))
+}
+
+// NanoFindById
+func NanoFindById(colName *C.char, docId C.longlong) *C.char {
+	globalMu.RLock()
+	cName := C.GoString(colName)
+	col, ok := openCollections[cName]
+	globalMu.RUnlock()
+
+	if !ok {
+		return nil
+	}
+	doc, err := col.FindById(uint64(docId))
+
+	if err != nil {
+		return nil
+	}
+
+	bytes, _ := json.Marshal(doc)
+	return C.CString(string(bytes))
+}
 
 //export NanoFree
 func NanoFree(ptr *C.char) {
 	C.free(unsafe.Pointer(ptr))
+}
+
+//export NanoClose
+func NanoClose() C.longlong {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	if pager == nil {
+		return 1
+	}
+
+	err := pager.Close()
+	if err != nil {
+		return -1
+	}
+
+	pager = nil
+	catalog = nil
+	openCollections = make(map[string]*collection.Collection)
+
+	return 1
 }
 
 // Main is required for buildmode=c-shared, but it is ignored

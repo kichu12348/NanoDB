@@ -217,7 +217,7 @@ func (c *Collection) Delete(id uint64) error {
 	return nil
 }
 
-func (c *Collection) Scan() ([]map[string]any, error) {
+func (c *Collection) Find(query map[string]any) ([]map[string]any, error) {
 	var results []map[string]any
 
 	currentPageId := c.RootPage
@@ -237,10 +237,41 @@ func (c *Collection) Scan() ([]map[string]any, error) {
 			if err != nil {
 				return nil, err
 			}
-			results = append(results, doc)
+			if match(doc, query) {
+				results = append(results, doc)
+			}
 		}
 		currentPageId = binary.LittleEndian.Uint32(pageData[4:8])
 	}
 
 	return results, nil
+}
+
+func (c *Collection) FindOne(query map[string]any) (map[string]any, error) {
+
+	currentPageId := c.RootPage
+	for currentPageId != 0 {
+		pageData, err := c.Pager.ReadPage(currentPageId)
+
+		if err != nil {
+			return nil, err
+		}
+
+		slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+
+		for slot := range slotCount {
+
+			_, data := record.ReadRecord(pageData, slot)
+			doc, err := record.DecodeDoc(data)
+			if err != nil {
+				return nil, err
+			}
+			if match(doc, query) {
+				return doc, nil
+			}
+		}
+		currentPageId = binary.LittleEndian.Uint32(pageData[4:8])
+	}
+
+	return nil, nil
 }

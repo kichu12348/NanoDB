@@ -1,10 +1,8 @@
 package main
 
 import (
-	"fmt"
 	"os"
 
-	"nanodb/internal/collection"
 	"nanodb/internal/record"
 	"nanodb/internal/storage"
 )
@@ -73,7 +71,7 @@ func main() {
 
 	// 4. Create Collection Wrapper
 	// Now this will read the EXISTING pages instead of wiping them
-	users, err := collection.NewCollection("users", userRootPage, p, h)
+	//users, err := collection.NewCollection("users", userRootPage, p, h)
 	// if err != nil {
 	// 	panic(err)
 	// }
@@ -129,8 +127,6 @@ func main() {
 	// }
 
 	//record, _ := record.GetAllCollections(p)
-
-	fmt.Println(users.Scan())
 
 	//fmt.Println("--- STARTING CONCURRENCY TEST ---")
 
