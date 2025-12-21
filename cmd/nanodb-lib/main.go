@@ -84,6 +84,32 @@ func loadExistingCollections() {
 
 //export NanoCreateCollection
 func NanoCreateCollection(colName *C.char) C.longlong {
+	cName := C.GoString(colName)
+
+	_, ok := openCollections[cName]
+	if ok {
+		return 0
+	}
+
+	newPageNum, err := storage.AllocatePage(pager, header)
+	if err != nil {
+		return -1
+	}
+
+	empty := make([]byte, header.PageSize)
+	if err := pager.WritePage(newPageNum, empty); err != nil {
+		return -1
+	}
+
+	entry := record.EncodeCollectionEntry(cName, newPageNum)
+	page, _ := pager.ReadPage(1)
+
+	success, _ := record.InsertRecord(page, 0, entry)
+
+	if success {
+		//later: todododo
+	}
+
 	// TODO tmrw
 	return 1
 }
