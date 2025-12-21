@@ -2,15 +2,15 @@ package main
 
 import (
 	"fmt"
-	//"os"
 
 	"nanodb/internal/collection"
+	"nanodb/internal/record"
 	"nanodb/internal/storage"
 )
 
 func main() {
 	// Clean restart
-	// os.Remove("test.db")
+	//os.Remove("test.db")
 
 	// 1. Low-Level Init
 	p, err := storage.OpenPager("test.db")
@@ -29,19 +29,40 @@ func main() {
 	}
 	storage.WriteHeader(p, h)
 
-	// 3. Create Root Page for our collection
-	rootPage, err := storage.AllocatePage(p, h)
+	// create catalog page which will hold all collections
+	catalogPage, err := storage.AllocatePage(p, h)
 	if err != nil {
 		panic(err)
 	}
 
+	//initialize catalog page
+	rawCatalogPage := make([]byte, storage.PageSize)
+	storage.InitDataPage(rawCatalogPage)
+	p.WritePage(catalogPage, rawCatalogPage)
+
+	// 3. Create Root Page for our collection page 2
+	userRootPage, err := storage.AllocatePage(p, h)
+	if err != nil {
+		panic(err)
+	}
+
+	metaEntry := record.EncodeCollectionEntry("users", userRootPage)
+
+	//write collection entry to catalog page
+	catalogData, err := p.ReadPage(catalogPage)
+	if err != nil {
+		panic(err)
+	}
+	record.InsertRecord(catalogData, 0, metaEntry)
+	p.WritePage(catalogPage, catalogData)
+
 	// Initialize root page
 	rawPage := make([]byte, storage.PageSize)
 	storage.InitDataPage(rawPage)
-	p.WritePage(rootPage, rawPage)
+	p.WritePage(userRootPage, rawPage)
 
 	// 4. Create High-Level Collection
-	users, err := collection.NewCollection("users", rootPage, p, h)
+	users, err := collection.NewCollection("users", userRootPage, p, h)
 	if err != nil {
 		panic(err)
 	}
@@ -49,23 +70,30 @@ func main() {
 	// 5. STRESS TEST: Insert 100 users
 	// A page is 4096 bytes. Each user is ~50 bytes.
 	// 100 users = ~5000 bytes. This GUARANTEES we need at least 2 pages.
-	fmt.Println("Starting insert loop...")
+	//fmt.Println("Starting insert loop...")
 
-	// for i := range 100 {
-	// 	user := map[string]any{
-	// 		"id":   i,
-	// 		"name": fmt.Sprintf("User_%d", i),
-	// 		"bio":  "This is some extra data to fill up space faster...",
-	// 	}
-
-	// 	err := users.Insert(user)
-	// 	if err != nil {
-	// 		panic(err)
-	// 	}
+	//for i := range 10 {
+	// user := map[string]any{
+	// 	"id":    i,
+	// 	"name":  fmt.Sprintf("User %d", i),
+	// 	"email": fmt.Sprintf("rmaha%d@example.com", i),
 	// }
 
+	// _, err := users.Insert(user)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	//fmt.Printf("Inserted user %d with docId %d\n", i, docId)
+
+	// doc, err := users.FindById(docId)
+	// if err != nil {
+	// 	panic(err)
+	// }
+	//fmt.Printf("Verified inserted document: %+v\n", doc)
+	//}
+
 	//find doc by id
-	doc, err := users.FindById(42)
+	doc, err := users.FindById(16264638516676103845)
 	if err != nil {
 		panic(err)
 	}

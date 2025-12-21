@@ -44,15 +44,16 @@ func GenerateRandomId(n int) uint64 {
 	return id
 }
 
-func (c *Collection) Insert(doc map[string]any) error {
+func (c *Collection) Insert(doc map[string]any) (uint64, error) {
+	docId := GenerateRandomId(8)
+
+	doc["_id"] = docId
 
 	data, err := record.EncodeDoc(doc)
 
 	if err != nil {
-		return err
+		return 0, err
 	}
-
-	docId := GenerateRandomId(8)
 
 	currentPageId := c.RootPage
 
@@ -60,23 +61,24 @@ func (c *Collection) Insert(doc map[string]any) error {
 		//read the current page
 		pageData, err := c.Pager.ReadPage(currentPageId)
 		if err != nil {
-			return err
+			return 0, err
 		}
 
 		//try to insert the record
 		success, err := record.InsertRecord(pageData, docId, data)
 		if err != nil {
-			return err
+			return 0, err
 		}
 
 		if success {
 			//update index
 			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+			fmt.Printf("Inserted docId %d at page %d slot %d\n", docId, currentPageId, slotCount-1)
 
 			c.Index[docId] = index.DocLocation{Page: currentPageId, Slot: slotCount - 1}
 			// write back the page if insertion successful
 
-			return c.Pager.WritePage(currentPageId, pageData)
+			return docId, c.Pager.WritePage(currentPageId, pageData)
 		}
 
 		//move to next page if insertion failed
@@ -92,20 +94,20 @@ func (c *Collection) Insert(doc map[string]any) error {
 		newPageId, err := storage.AllocatePage(c.Pager, c.Header)
 
 		if err != nil {
-			return err
+			return 0, err
 		}
 
 		newPageData := make([]byte, storage.PageSize)
 		storage.InitDataPage(newPageData)
 
 		if err := c.Pager.WritePage(newPageId, newPageData); err != nil {
-			return err
+			return 0, err
 		}
 
 		//link old page to new page
 		binary.LittleEndian.PutUint32(pageData[4:8], newPageId)
 		if err := c.Pager.WritePage(currentPageId, pageData); err != nil {
-			return err
+			return 0, err
 		}
 
 		currentPageId = newPageId

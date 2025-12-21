@@ -92,6 +92,6 @@ func FreePage(p *Pager, h *DBHeader, pageNum uint32) error {
 }
 
 func InitDataPage(page []byte) {
-	binary.LittleEndian.PutUint16(page[0:2], 0)
-	binary.LittleEndian.PutUint16(page[2:4], uint16(PageSize))
+	binary.LittleEndian.PutUint16(page[0:2], 0)                // slot count
+	binary.LittleEndian.PutUint16(page[2:4], uint16(PageSize)) // free start
 }

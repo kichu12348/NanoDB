@@ -63,8 +63,8 @@ func InsertRecord(
 	copy(page[recordOffset+12:], data)
 
 	//write slot
-	slotOffset := 8 + slotCount*4 // each slot is 4 bytes and header is 6 bytes [slotCount (2 bytes) + freeStart (2 bytes) + nextPage (4 bytes)]
-	writeUint16(page[slotOffset:], recordOffset)
+	slotOffset := 8 + slotCount*4                // each slot is 4 bytes and header is 6 bytes [slotCount (2 bytes) + freeStart (2 bytes) + nextPage (4 bytes)]
+	writeUint16(page[slotOffset:], recordOffset) // [offset (2 bytes) + length (2 bytes)]
 	writeUint16(page[slotOffset+2:], recordSize)
 
 	//update page header
