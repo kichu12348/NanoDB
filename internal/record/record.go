@@ -7,6 +7,8 @@ import (
 	"github.com/vmihailenco/msgpack/v5"
 )
 
+const DeletedFlag uint16 = 0x8000 // 1000 0000 0000 0000
+
 type Slot struct {
 	Offset uint16
 	Length uint16
@@ -15,6 +17,14 @@ type Slot struct {
 type CollectionEntry struct {
 	Name     string
 	RootPage uint32
+}
+
+func isDeleted(len uint16) bool {
+	return (len & DeletedFlag) != 0
+}
+
+func GetActualLen(len uint16) uint16 {
+	return len & ^DeletedFlag
 }
 
 func writeUint16(b []byte, v uint16) {
@@ -77,10 +87,15 @@ func InsertRecord(
 	return true, nil
 }
 
-func ReadRecord(page []byte, slot uint16) (uint64, []byte) {
+func ReadRecord(page []byte, slot uint16) (uint64, []byte, bool) {
 	slotOffset := 8 + slot*4
 
 	offset := binary.LittleEndian.Uint16(page[slotOffset:])
+	recordLen := binary.LittleEndian.Uint16(page[slotOffset+2:])
+
+	if isDeleted(recordLen) {
+		return 0, nil, true
+	}
 
 	docId := binary.LittleEndian.Uint64(page[offset:])
 	dataLen := binary.LittleEndian.Uint32(page[offset+8:])
@@ -88,7 +103,7 @@ func ReadRecord(page []byte, slot uint16) (uint64, []byte) {
 	data := make([]byte, dataLen)
 	copy(data, page[offset+12:offset+12+uint16(dataLen)])
 
-	return docId, data
+	return docId, data, false
 }
 
 func EncodeCollectionEntry(name string, root uint32) []byte { // [name length (1 byte), name (n bytes), root page (4 bytes)]
@@ -119,8 +134,11 @@ func GetAllCollections(p *storage.Pager) ([]CollectionEntry, error) {
 
 	for slot := range slotCount {
 		// 1. Read the Record
-		_, data := ReadRecord(pageData, slot)
+		_, data, deleted := ReadRecord(pageData, slot)
 
+		if deleted {
+			continue
+		}
 		// 2. Decode the specific CollectionEntry format
 		// [NameLen (1)] [Name] [RootPage (4)]
 		entry := DecodeCollectionEntry(data)
@@ -128,4 +146,18 @@ func GetAllCollections(p *storage.Pager) ([]CollectionEntry, error) {
 	}
 
 	return collections, nil
+}
+
+func MarkSlotDeleted(page []byte, slotIdx uint16) {
+	lenOffset := 10 + slotIdx*4
+
+	currLen := binary.LittleEndian.Uint16(page[lenOffset:])
+
+	if isDeleted(currLen) {
+		return
+	}
+
+	newLen := currLen | DeletedFlag // flip the bit
+
+	binary.LittleEndian.PutUint16(page[lenOffset:], newLen)
 }

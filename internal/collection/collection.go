@@ -134,7 +134,11 @@ func (c *Collection) FindById(docId uint64) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	_, data := record.ReadRecord(pageData, loc.Slot)
+	_, data, deleted := record.ReadRecord(pageData, loc.Slot)
+
+	if deleted {
+		return nil, nil
+	}
 
 	doc, err := record.DecodeDoc(data)
 	if err != nil {
@@ -144,7 +148,7 @@ func (c *Collection) FindById(docId uint64) (map[string]any, error) {
 	return doc, nil
 }
 
-func (c *Collection) Update(id uint64, newData map[string]any) error {
+func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 	c.mu.Lock()         // lock for writing
 	defer c.mu.Unlock() // unlock after function ends
 	if _, exists := c.Index[id]; !exists {
@@ -174,6 +178,8 @@ func (c *Collection) Update(id uint64, newData map[string]any) error {
 		//if update successful, write back and update index
 		if success {
 			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+			prevLoc := c.Index[id]
+			record.MarkSlotDeleted(pageData, prevLoc.Slot)
 			c.Index[id] = index.DocLocation{Page: currPageId, Slot: slotCount - 1}
 			return c.Pager.WritePage(currPageId, pageData)
 		}
@@ -207,10 +213,25 @@ func (c *Collection) Update(id uint64, newData map[string]any) error {
 	}
 }
 
-func (c *Collection) Delete(id uint64) error {
-	_, exists := c.Index[id]
+func (c *Collection) DeleteById(id uint64) error {
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	loc, exists := c.Index[id]
 	if !exists {
 		return fmt.Errorf("document with ID %d does not exist", id)
+	}
+
+	page, err := c.Pager.ReadPage(loc.Page)
+	if err != nil {
+		return err
+	}
+
+	record.MarkSlotDeleted(page, loc.Slot)
+
+	if err := c.Pager.WritePage(loc.Page, page); err != nil {
+		return err
 	}
 
 	delete(c.Index, id)
@@ -232,13 +253,53 @@ func (c *Collection) Find(query map[string]any) ([]map[string]any, error) {
 
 		for slot := range slotCount {
 
-			_, data := record.ReadRecord(pageData, slot)
+			_, data, deleted := record.ReadRecord(pageData, slot)
+
+			if deleted {
+				continue
+			}
+
 			doc, err := record.DecodeDoc(data)
 			if err != nil {
 				return nil, err
 			}
 			if match(doc, query) {
 				results = append(results, doc)
+			}
+		}
+		currentPageId = binary.LittleEndian.Uint32(pageData[4:8])
+	}
+
+	return results, nil
+}
+
+func (c *Collection) FindAllDocIds(query map[string]any) ([]uint64, error) {
+	var results []uint64
+
+	currentPageId := c.RootPage
+	for currentPageId != 0 {
+		pageData, err := c.Pager.ReadPage(currentPageId)
+
+		if err != nil {
+			return []uint64{0}, err
+		}
+
+		slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+
+		for slot := range slotCount {
+
+			docId, data, deleted := record.ReadRecord(pageData, slot)
+
+			if deleted {
+				continue
+			}
+
+			doc, err := record.DecodeDoc(data)
+			if err != nil {
+				return []uint64{0}, err
+			}
+			if match(doc, query) {
+				results = append(results, docId)
 			}
 		}
 		currentPageId = binary.LittleEndian.Uint32(pageData[4:8])
@@ -261,7 +322,12 @@ func (c *Collection) FindOne(query map[string]any) (map[string]any, error) {
 
 		for slot := range slotCount {
 
-			_, data := record.ReadRecord(pageData, slot)
+			_, data, deleted := record.ReadRecord(pageData, slot)
+
+			if deleted {
+				continue
+			}
+
 			doc, err := record.DecodeDoc(data)
 			if err != nil {
 				return nil, err

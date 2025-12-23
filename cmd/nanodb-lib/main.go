@@ -6,6 +6,7 @@ package main
 import "C"
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"sync"
 	"unsafe"
@@ -84,6 +85,9 @@ func loadExistingCollections() {
 
 //export NanoCreateCollection
 func NanoCreateCollection(colName *C.char) C.longlong {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
 	cName := C.GoString(colName)
 
 	_, ok := openCollections[cName]
@@ -91,27 +95,62 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 		return 0
 	}
 
-	newPageNum, err := storage.AllocatePage(pager, header)
+	newColPageNum, err := storage.AllocatePage(pager, header)
 	if err != nil {
 		return -1
 	}
 
 	empty := make([]byte, header.PageSize)
-	if err := pager.WritePage(newPageNum, empty); err != nil {
+	storage.InitDataPage(empty)
+	if err := pager.WritePage(newColPageNum, empty); err != nil {
 		return -1
 	}
 
-	entry := record.EncodeCollectionEntry(cName, newPageNum)
-	page, _ := pager.ReadPage(1)
+	var currentPageNum uint32 = 1
+	for {
+		entry := record.EncodeCollectionEntry(cName, newColPageNum)
+		page, _ := pager.ReadPage(uint32(currentPageNum))
 
-	success, _ := record.InsertRecord(page, 0, entry)
+		success, _ := record.InsertRecord(page, 0, entry)
 
-	if success {
-		//later: todododo
+		// if success record inserted
+		if success {
+			if err := pager.WritePage(currentPageNum, page); err != nil {
+				return -1
+			}
+			newCol, _ := collection.NewCollection(cName, newColPageNum, pager, header)
+			openCollections[cName] = newCol
+			return 1
+		}
+
+		//move to next page
+		nextPage := binary.LittleEndian.Uint32(page[4:8])
+
+		if nextPage != 0 {
+			currentPageNum = nextPage
+			continue
+		}
+
+		// if no page then allocate new page for
+		newPageId, err := storage.AllocatePage(pager, header)
+		if err != nil {
+			return -1
+		}
+
+		emptyCatPage := make([]byte, header.PageSize)
+		storage.InitDataPage(emptyCatPage)
+
+		if err := pager.WritePage(newPageId, emptyCatPage); err != nil {
+			return -1
+		}
+
+		binary.LittleEndian.PutUint32(page[4:8], newPageId)
+
+		if err := pager.WritePage(currentPageNum, page); err != nil {
+			return -1
+		}
+		currentPageNum = newPageId
 	}
-
-	// TODO tmrw
-	return 1
 }
 
 //export NanoInsert
@@ -241,6 +280,15 @@ func NanoFindById(colName *C.char, docId C.longlong) *C.char {
 
 	bytes, _ := json.Marshal(doc)
 	return C.CString(string(bytes))
+}
+
+//export NanoUpdateById
+func NanoUpdateById(colName *C.char, docId C.longlong, jsonStr *C.char) *C.char {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	//cName := C.GoString(colName)
+	return C.CString("nUH")
 }
 
 //export NanoFree
