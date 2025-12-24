@@ -24,10 +24,21 @@ var (
 
 	catalog  *collection.Collection
 	globalMu sync.RWMutex
+
+	activeUsers uint
 )
 
 //export NanoInit
 func NanoInit(path *C.char) {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	activeUsers++
+
+	if pager != nil {
+		return
+	}
+
 	goPath := C.GoString(path)
 
 	p, err := storage.OpenPager(goPath)
@@ -62,12 +73,11 @@ func NanoInit(path *C.char) {
 	}
 	catalog = cat
 
-	loadExistingCollections()
+	loadExistingCollectionsInternal()
 }
 
-func loadExistingCollections() {
-	globalMu.Lock()
-	defer globalMu.Unlock()
+func loadExistingCollectionsInternal() {
+
 	collections, err := record.GetAllCollections(pager)
 
 	if err != nil {
@@ -471,16 +481,22 @@ func NanoClose() C.longlong {
 		return 1
 	}
 
-	err := pager.Close()
-	if err != nil {
-		return -1
+	if activeUsers > 0 {
+		activeUsers--
 	}
 
-	pager = nil
-	catalog = nil
-	openCollections = make(map[string]*collection.Collection)
+	if activeUsers == 0 {
+		err := pager.Close()
+		if err != nil {
+			return -1
+		}
 
+		pager = nil
+		catalog = nil
+		openCollections = make(map[string]*collection.Collection)
+	}
 	return 1
+
 }
 
 // Main is required for buildmode=c-shared, but it is ignored
