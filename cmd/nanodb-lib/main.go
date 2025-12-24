@@ -153,6 +153,20 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 	}
 }
 
+//export NanoGetCollections
+func NanoGetCollections() *C.char {
+	globalMu.RLock()
+	defer globalMu.RUnlock()
+
+	var cols []string
+	for key := range openCollections {
+		cols = append(cols, key)
+	}
+	bytes, _ := json.Marshal(cols)
+
+	return C.CString(string(bytes))
+}
+
 //export NanoInsert
 func NanoInsert(colName *C.char, jsonStr *C.char) C.longlong {
 
