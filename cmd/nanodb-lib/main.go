@@ -156,9 +156,9 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 //export NanoInsert
 func NanoInsert(colName *C.char, jsonStr *C.char) C.longlong {
 
-	globalMu.RLock()
 	cName := C.GoString(colName)
 
+	globalMu.RLock()
 	col, ok := openCollections[cName]
 	globalMu.RUnlock()
 
@@ -182,9 +182,9 @@ func NanoInsert(colName *C.char, jsonStr *C.char) C.longlong {
 
 //export NanoInsertMany
 func NanoInsertMany(colName *C.char, jsonStr *C.char) *C.char {
-	globalMu.RLock()
 	cName := C.GoString(colName)
 
+	globalMu.RLock()
 	col, ok := openCollections[cName]
 	globalMu.RUnlock()
 
@@ -214,8 +214,10 @@ func NanoInsertMany(colName *C.char, jsonStr *C.char) *C.char {
 
 //export NanoFind
 func NanoFind(colName *C.char, queryJson *C.char, limit C.longlong) *C.char {
-	globalMu.RLock()
+
 	cName := C.GoString(colName)
+
+	globalMu.RLock()
 	col, ok := openCollections[cName]
 	globalMu.RUnlock()
 
@@ -229,7 +231,12 @@ func NanoFind(colName *C.char, queryJson *C.char, limit C.longlong) *C.char {
 		return nil
 	}
 
-	docs, _, err := col.Find(query, &collection.FindOptions{Limit: uint(limit)})
+	var optLimit uint
+	if limit > 0 {
+		optLimit = uint(limit)
+	}
+
+	docs, _, err := col.Find(query, &collection.FindOptions{Limit: optLimit})
 	if err != nil {
 		return nil
 	}
@@ -239,8 +246,10 @@ func NanoFind(colName *C.char, queryJson *C.char, limit C.longlong) *C.char {
 
 //export NanoFindOne
 func NanoFindOne(colName *C.char, queryJson *C.char) *C.char {
-	globalMu.RLock()
+
 	cName := C.GoString(colName)
+
+	globalMu.RLock()
 	col, ok := openCollections[cName]
 	globalMu.RUnlock()
 
@@ -254,7 +263,7 @@ func NanoFindOne(colName *C.char, queryJson *C.char) *C.char {
 		return nil
 	}
 
-	doc, _, err := col.Find(query, nil)
+	doc, err := col.FindOne(query)
 	if err != nil {
 		return nil
 	}
@@ -264,8 +273,9 @@ func NanoFindOne(colName *C.char, queryJson *C.char) *C.char {
 
 // NanoFindById
 func NanoFindById(colName *C.char, docId C.longlong) *C.char {
-	globalMu.RLock()
 	cName := C.GoString(colName)
+
+	globalMu.RLock()
 	col, ok := openCollections[cName]
 	globalMu.RUnlock()
 
@@ -284,12 +294,11 @@ func NanoFindById(colName *C.char, docId C.longlong) *C.char {
 
 //export NanoUpdateById
 func NanoUpdateById(colName *C.char, docId C.longlong, jsonStr *C.char) *C.char {
-	globalMu.Lock()
-	defer globalMu.Unlock()
-
 	cName := C.GoString(colName)
 
+	globalMu.RLock()
 	col, ok := openCollections[cName]
+	globalMu.RUnlock()
 
 	if !ok {
 		return nil
@@ -330,11 +339,11 @@ func NanoUpdateById(colName *C.char, docId C.longlong, jsonStr *C.char) *C.char 
 
 //export NanoUpdateMany
 func NanoUpdateMany(colName *C.char, queryJson *C.char, jsonStr *C.char) *C.char {
-	globalMu.Lock()
-	defer globalMu.Unlock()
 
 	cName := C.GoString(colName)
+	globalMu.RLock()
 	col, ok := openCollections[cName]
+	globalMu.RUnlock()
 
 	if !ok {
 		return nil
@@ -376,11 +385,11 @@ func NanoUpdateMany(colName *C.char, queryJson *C.char, jsonStr *C.char) *C.char
 
 //export NanoDeleteById
 func NanoDeleteById(colName *C.char, docId C.longlong) C.longlong {
-	globalMu.Lock()
-	defer globalMu.Unlock()
 
 	cName := C.GoString(colName)
+	globalMu.RLock()
 	col, ok := openCollections[cName]
+	globalMu.RUnlock()
 
 	if !ok {
 		return -1
@@ -397,11 +406,12 @@ func NanoDeleteById(colName *C.char, docId C.longlong) C.longlong {
 
 //export NanoDeleteMany
 func NanoDeleteMany(colName *C.char, query *C.char) C.longlong {
-	globalMu.Lock()
-	defer globalMu.Unlock()
 
 	cName := C.GoString(colName)
+
+	globalMu.RLock()
 	col, ok := openCollections[cName]
+	globalMu.RUnlock()
 
 	if !ok {
 		return -1
@@ -420,7 +430,7 @@ func NanoDeleteMany(colName *C.char, query *C.char) C.longlong {
 		return -1
 	}
 
-	for docId := range docsIds {
+	for _, docId := range docsIds {
 		if err := col.DeleteById(uint64(docId)); err != nil {
 			break
 		}
