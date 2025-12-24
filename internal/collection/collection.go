@@ -21,6 +21,7 @@ type Collection struct {
 
 type FindOptions struct {
 	Limit uint
+	Skip  uint
 }
 
 func NewCollection(name string, root uint32, pager *storage.Pager, header *storage.DBHeader) (*Collection, error) {
@@ -248,10 +249,16 @@ func (c *Collection) Find(query map[string]any, opts *FindOptions) ([]map[string
 
 	isThereLimit := false
 	var limit uint = 0
+	var skip uint = 0
 
-	if opts != nil && opts.Limit > 0 {
-		isThereLimit = true
-		limit = opts.Limit
+	if opts != nil {
+		if opts.Limit > 0 {
+			isThereLimit = true
+			limit = opts.Limit
+		}
+		if opts.Skip > 0 {
+			skip = opts.Skip
+		}
 	}
 
 	currentPageId := c.RootPage
@@ -277,6 +284,12 @@ func (c *Collection) Find(query map[string]any, opts *FindOptions) ([]map[string
 				return nil, []uint64{0}, err
 			}
 			if match(doc, query) {
+
+				if skip > 0 {
+					skip--
+					continue
+				}
+
 				results = append(results, doc)
 				docIds = append(docIds, docId)
 				if isThereLimit {

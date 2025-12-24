@@ -227,7 +227,7 @@ func NanoInsertMany(colName *C.char, jsonStr *C.char) *C.char {
 }
 
 //export NanoFind
-func NanoFind(colName *C.char, queryJson *C.char, limit C.longlong) *C.char {
+func NanoFind(colName *C.char, queryJson *C.char, limit C.longlong, skip C.longlong) *C.char {
 
 	cName := C.GoString(colName)
 
@@ -246,11 +246,15 @@ func NanoFind(colName *C.char, queryJson *C.char, limit C.longlong) *C.char {
 	}
 
 	var optLimit uint
+	var skipCount uint
 	if limit > 0 {
 		optLimit = uint(limit)
 	}
+	if skip > 0 {
+		skipCount = uint(skip)
+	}
 
-	docs, _, err := col.Find(query, &collection.FindOptions{Limit: optLimit})
+	docs, _, err := col.Find(query, &collection.FindOptions{Limit: optLimit, Skip: skipCount})
 	if err != nil {
 		return nil
 	}
@@ -285,7 +289,7 @@ func NanoFindOne(colName *C.char, queryJson *C.char) *C.char {
 	return C.CString(string(bytes))
 }
 
-// NanoFindById
+//export NanoFindById
 func NanoFindById(colName *C.char, docId C.longlong) *C.char {
 	cName := C.GoString(colName)
 
