@@ -213,7 +213,7 @@ func NanoInsertMany(colName *C.char, jsonStr *C.char) *C.char {
 }
 
 //export NanoFind
-func NanoFind(colName *C.char, queryJson *C.char) *C.char {
+func NanoFind(colName *C.char, queryJson *C.char, limit C.longlong) *C.char {
 	globalMu.RLock()
 	cName := C.GoString(colName)
 	col, ok := openCollections[cName]
@@ -229,7 +229,7 @@ func NanoFind(colName *C.char, queryJson *C.char) *C.char {
 		return nil
 	}
 
-	docs, err := col.Find(query)
+	docs, _, err := col.Find(query, &collection.FindOptions{Limit: uint(limit)})
 	if err != nil {
 		return nil
 	}
@@ -254,7 +254,7 @@ func NanoFindOne(colName *C.char, queryJson *C.char) *C.char {
 		return nil
 	}
 
-	doc, err := col.Find(query)
+	doc, _, err := col.Find(query, nil)
 	if err != nil {
 		return nil
 	}
@@ -287,8 +287,146 @@ func NanoUpdateById(colName *C.char, docId C.longlong, jsonStr *C.char) *C.char 
 	globalMu.Lock()
 	defer globalMu.Unlock()
 
-	//cName := C.GoString(colName)
-	return C.CString("nUH")
+	cName := C.GoString(colName)
+
+	col, ok := openCollections[cName]
+
+	if !ok {
+		return nil
+	}
+
+	jstr := C.GoString(jsonStr)
+
+	var jsonData map[string]any
+	err := json.Unmarshal([]byte(jstr), &jsonData)
+
+	if err != nil {
+		return nil
+	}
+
+	doc, err := col.FindById(uint64(docId))
+
+	if err != nil {
+		return nil
+	}
+
+	for key, val := range jsonData {
+		if key == "_id" {
+			continue
+		}
+		doc[key] = val
+	}
+
+	errOnUpdate := col.UpdateById(uint64(docId), doc)
+
+	if errOnUpdate != nil {
+		return nil
+	}
+
+	bytes, _ := json.Marshal(doc)
+
+	return C.CString(string(bytes))
+}
+
+//export NanoUpdateMany
+func NanoUpdateMany(colName *C.char, queryJson *C.char, jsonStr *C.char) *C.char {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	cName := C.GoString(colName)
+	col, ok := openCollections[cName]
+
+	if !ok {
+		return nil
+	}
+	qStr := C.GoString(queryJson)
+
+	jstr := C.GoString(jsonStr)
+
+	var jsonData map[string]any
+	err := json.Unmarshal([]byte(jstr), &jsonData)
+
+	var query map[string]any
+	if err := json.Unmarshal([]byte(qStr), &query); err != nil {
+		return nil
+	}
+
+	docs, docIds, err := col.Find(query, nil)
+	if err != nil {
+		return nil
+	}
+
+	for idx, doc := range docs {
+		for key, val := range jsonData {
+			if key == "_id" {
+				continue
+			}
+			doc[key] = val
+		}
+		errOnUpdate := col.UpdateById(uint64(docIds[idx]), doc)
+
+		if errOnUpdate != nil {
+			break
+		}
+	}
+
+	bytes, _ := json.Marshal(docs)
+	return C.CString(string(bytes))
+}
+
+//export NanoDeleteById
+func NanoDeleteById(colName *C.char, docId C.longlong) C.longlong {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	cName := C.GoString(colName)
+	col, ok := openCollections[cName]
+
+	if !ok {
+		return -1
+	}
+
+	err := col.DeleteById(uint64(docId))
+
+	if err != nil {
+		return -1
+	}
+
+	return 1
+}
+
+//export NanoDeleteMany
+func NanoDeleteMany(colName *C.char, query *C.char) C.longlong {
+	globalMu.Lock()
+	defer globalMu.Unlock()
+
+	cName := C.GoString(colName)
+	col, ok := openCollections[cName]
+
+	if !ok {
+		return -1
+	}
+
+	jstr := C.GoString(query)
+
+	var jsonData map[string]any
+
+	if err := json.Unmarshal([]byte(jstr), &jsonData); err != nil {
+		return -1
+	}
+
+	_, docsIds, err := col.Find(jsonData, nil)
+	if err != nil {
+		return -1
+	}
+
+	for docId := range docsIds {
+		if err := col.DeleteById(uint64(docId)); err != nil {
+			break
+		}
+	}
+
+	return 1
 }
 
 //export NanoFree

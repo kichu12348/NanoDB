@@ -19,6 +19,10 @@ type Collection struct {
 	mu       sync.RWMutex
 }
 
+type FindOptions struct {
+	Limit uint
+}
+
 func NewCollection(name string, root uint32, pager *storage.Pager, header *storage.DBHeader) (*Collection, error) {
 	idx, err := index.BuildIndex(pager, root)
 	if err != nil {
@@ -238,22 +242,31 @@ func (c *Collection) DeleteById(id uint64) error {
 	return nil
 }
 
-func (c *Collection) Find(query map[string]any) ([]map[string]any, error) {
+func (c *Collection) Find(query map[string]any, opts *FindOptions) ([]map[string]any, []uint64, error) {
 	var results []map[string]any
+	var docIds []uint64
+
+	isThereLimit := false
+	var limit uint = 0
+
+	if opts != nil && opts.Limit > 0 {
+		isThereLimit = true
+		limit = opts.Limit
+	}
 
 	currentPageId := c.RootPage
 	for currentPageId != 0 {
 		pageData, err := c.Pager.ReadPage(currentPageId)
 
 		if err != nil {
-			return nil, err
+			return nil, []uint64{0}, err
 		}
 
 		slotCount := binary.LittleEndian.Uint16(pageData[0:2])
 
 		for slot := range slotCount {
 
-			_, data, deleted := record.ReadRecord(pageData, slot)
+			docId, data, deleted := record.ReadRecord(pageData, slot)
 
 			if deleted {
 				continue
@@ -261,16 +274,23 @@ func (c *Collection) Find(query map[string]any) ([]map[string]any, error) {
 
 			doc, err := record.DecodeDoc(data)
 			if err != nil {
-				return nil, err
+				return nil, []uint64{0}, err
 			}
 			if match(doc, query) {
 				results = append(results, doc)
+				docIds = append(docIds, docId)
+				if isThereLimit {
+					limit--
+					if limit == 0 {
+						return results, docIds, nil
+					}
+				}
 			}
 		}
 		currentPageId = binary.LittleEndian.Uint32(pageData[4:8])
 	}
 
-	return results, nil
+	return results, docIds, nil
 }
 
 func (c *Collection) FindAllDocIds(query map[string]any) ([]uint64, error) {
