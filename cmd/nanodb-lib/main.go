@@ -340,10 +340,12 @@ func NanoUpdateById(colName *C.char, docId C.longlong, jsonStr *C.char) *C.char 
 	if err != nil {
 		return nil
 	}
-
 	doc, err := col.FindById(uint64(docId))
 
 	if err != nil {
+		return nil
+	}
+	if doc == nil {
 		return nil
 	}
 
