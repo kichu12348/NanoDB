@@ -1,108 +1,67 @@
 # NanoDB
 
-NanoDB is a high-performance, embedded, document-oriented database written in Go. It is designed for low-latency applications, offering O(1) read speeds and efficient append-only writes. It supports schemaless data storage using MessagePack serialization and provides fine-grained concurrency control.
+NanoDB is an experimental embedded document-oriented database written in Go,
+built to explore how modern storage engines work at a low level.
 
-## 🚀 Performance Benchmarks
+The project focuses on page-based storage, slot directories, in-memory indexing,
+and byte-level record layout rather than production readiness. It is intended as
+a learning-driven systems project inspired by embedded databases like SQLite.
+
+---
+
+## 🧪 Informal Benchmarks (Development Tests)
+
+> ⚠️ These benchmarks were collected during development using different test
+> harnesses (Go / Node.js / Rust) and are intended for rough comparison only.
+> NanoDB does **not** yet implement WAL, crash recovery, or durability guarantees.
 
 ### Throughput
-*   **Write Speed (Batch Insert):** 77,544 docs/sec
-    *(Source: Rust Benchmark, 100k records)*
-*   **Read Speed (Point Lookup by ID):** 357,143 ops/sec
-    *(Source: Node.js Benchmark, In-Memory Hash Index)*
-*   **Scan Speed (Full Collection):** 256,410 ops/sec
-    *(Source: Node.js Benchmark, Sequential Read)*
+- **Batch Insert:** ~77k docs/sec  
+  *(Rust harness, ~100k records, append-heavy workload)*
 
-### ⚡ Latency & Efficiency
-*   **Index Access:** O(1) (Constant Time)
-*   **Write Complexity:** O(1) (Tail-Append Optimization)
-*   **Startup Time:** < 10ms (Lazy Loading)
+- **Point Lookup by ID:** ~357k ops/sec  
+  *(Node.js FFI test, in-memory hash index)*
 
-### 🛡️ Concurrency
-*   **Locking Model:** Fine-Grained Collection Locks + Reference Counting
-*   **Stress Test Result:** 0% Data Loss (4 Concurrent Workers, 2000 Ops)
+- **Full Collection Scan:** ~256k ops/sec  
+  *(Sequential page scan)*
+
+### Latency & Complexity
+- **Index Lookup:** O(1) average-case (in-memory hash map)
+- **Insert Path:** Amortized constant-time under append-friendly workloads
+- **Startup Time:** < 10ms (index rebuilt at startup)
+
+---
+
+## 🔒 Concurrency Model
+
+- **Locking Strategy:** Per-collection `sync.RWMutex`
+- **Concurrent Reads:** Allowed
+- **Writes:** Serialized per collection
+- **Stress Testing:** No inconsistencies observed during multi-worker tests
+
+---
 
 ## ✨ Features
 
-*   **Embedded:** Runs as a library within your application; no separate server process required.
-*   **Document-Oriented:** Stores data as schemaless documents (maps) using efficient MessagePack serialization.
-*   **High Performance:**
-    *   **In-Memory Indexing:** Uses a hash map for instant O(1) lookups by document ID.
-    *   **Page-Based Storage:** Custom paging system optimized for modern SSDs.
-*   **Concurrency Safe:** Thread-safe collections with `sync.RWMutex` allowing concurrent reads and safe writes.
-*   **Portable:** Written in pure Go. Can be compiled to a C-shared library (`.so`/`.dll`) for use with Node.js, Rust, Python, etc.
+- **Embedded:** Runs as a library inside your application (no server process).
+- **Document-Oriented:** Stores schemaless documents using MessagePack encoding.
+- **Page-Based Storage Engine:**
+  - Fixed-size 4KB pages
+  - Slot directory layout
+  - Page chaining for collection growth
+- **In-Memory Primary Index:**
+  - Maps `_id → {PageID, SlotID}`
+  - Rebuilt on startup
+- **Deletion Model:** Tombstone-based deletes (space reclaimed via future compaction).
+- **Concurrency Safe:** Thread-safe collections with fine-grained locking.
+- **Portable:** Written in pure Go and can be compiled as a C shared library
+  for use with Node.js, Rust, Python, and other languages via FFI.
+
+---
 
 ## 📦 Installation
 
 ```bash
 git clone https://github.com/kichu12348/NanoDB.git
-cd nanodb
+cd NanoDB
 go mod download
-```
-
-## 🛠️ Usage
-
-NanoDB is currently designed as a low-level embedded database engine.
-
-### Running the Demo
-You can run the internal demo/test entry point:
-
-```bash
-go run cmd/nanodb/main.go
-```
-
-### Building the Shared Library (FFI)
-To use NanoDB from other languages (like Node.js or Rust), build it as a shared library:
-
-```bash
-go build -buildmode=c-shared -o nanodb.so ./cmd/nanodb-lib
-```
-
-### Go Example (Internal API)
-
-*Note: The current API is low-level and resides in the `internal` package. A public API wrapper is planned.*
-
-```go
-package main
-
-import (
-    "fmt"
-    "nanodb/internal/collection"
-    "nanodb/internal/storage"
-)
-
-func main() {
-    // 1. Open the Pager
-    pager, _ := storage.OpenPager("data.db")
-    defer pager.Close()
-
-    // 2. Initialize Header (Simplified)
-    header, _ := storage.ReadHeader(pager)
-
-    // 3. Open a Collection
-    // Assuming root page for "users" is known (e.g., page 2)
-    users, _ := collection.NewCollection("users", 2, pager, header)
-
-    // 4. Insert a Document
-    doc := map[string]any{
-        "id":   101,
-        "name": "Alice",
-        "role": "admin",
-    }
-    users.Insert(doc)
-
-    // 5. Find a Document
-    result, _ := users.FindOne(101)
-    fmt.Println("Found:", result)
-}
-```
-
-## 🏗️ Architecture
-
-*   **Storage Engine:** Uses a paged storage model (4KB pages) with a free-list for space reclamation.
-*   **Data Format:** Records are serialized using **MessagePack** for compactness and speed.
-*   **Indexing:** Primary keys are indexed in-memory for O(1) access. The index maps IDs to `{PageID, SlotID}`.
-*   **Durability:** Direct file I/O with `os.File`.
-
-## 📄 License
-
-MIT
