@@ -56,8 +56,8 @@ func InsertRecord(
 	slotCount := binary.LittleEndian.Uint16(page[0:2])
 	freeStart := binary.LittleEndian.Uint16(page[2:4])
 
-	recordSize := uint16(12 + len(data)) // 8 bytes for docId, 4 bytes for data length
-	slotLength := uint16(4)              // 2 bytes for offset, 2 bytes for length
+	recordSize := uint16(12 + len(data))
+	slotLength := uint16(4)
 
 	requiredSpace := recordSize + slotLength
 
@@ -74,8 +74,8 @@ func InsertRecord(
 	copy(page[recordOffset+12:], data)
 
 	//write slot
-	slotOffset := 8 + slotCount*4                // each slot is 4 bytes and header is 8 bytes [slotCount (2 bytes) + freeStart (2 bytes) + nextPage (4 bytes)]
-	writeUint16(page[slotOffset:], recordOffset) // [offset (2 bytes) + length (2 bytes)]
+	slotOffset := 8 + slotCount*4
+	writeUint16(page[slotOffset:], recordOffset)
 	writeUint16(page[slotOffset+2:], recordSize)
 
 	//update page header
