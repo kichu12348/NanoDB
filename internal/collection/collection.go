@@ -82,7 +82,6 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 		if success {
 			//update index
 			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
-			fmt.Printf("Inserted docId %d at page %d slot %d\n", docId, currentPageId, slotCount-1)
 
 			c.Index[docId] = index.DocLocation{Page: currentPageId, Slot: slotCount - 1}
 			// write back the page if insertion successful
