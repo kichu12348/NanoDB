@@ -13,6 +13,7 @@ import (
 type Collection struct {
 	Name     string
 	RootPage uint32
+	LastPage uint32
 	Pager    *storage.Pager
 	Header   *storage.DBHeader
 	Index    index.Index
@@ -29,12 +30,27 @@ func NewCollection(name string, root uint32, pager *storage.Pager, header *stora
 	if err != nil {
 		return nil, err
 	}
+
+	lastPage := root
+	curr := lastPage
+
+	for curr != 0 {
+		page, _ := pager.ReadPage(curr)
+		nextPage := binary.LittleEndian.Uint32(page[4:8])
+		if nextPage == 0 {
+			lastPage = curr
+			break
+		}
+		curr = nextPage
+	}
+
 	return &Collection{
 		Name:     name,
 		RootPage: root,
 		Pager:    pager,
 		Header:   header,
 		Index:    idx,
+		LastPage: lastPage,
 	}, nil
 }
 
@@ -64,7 +80,7 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 		return 0, err
 	}
 
-	currentPageId := c.RootPage
+	currentPageId := c.LastPage
 
 	for {
 		//read the current page
@@ -117,6 +133,8 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 		if err := c.Pager.WritePage(currentPageId, pageData); err != nil {
 			return 0, err
 		}
+
+		c.LastPage = newPageId
 
 		currentPageId = newPageId
 	}
