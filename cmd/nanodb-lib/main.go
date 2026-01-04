@@ -47,7 +47,7 @@ func NanoInit(path *C.char) {
 	}
 	pager = p
 
-	h, err := storage.ReadHeader(pager)
+	h, err := pager.ReadHeader()
 	if err != nil {
 		h = &storage.DBHeader{
 			Magic:     [4]byte{'A', 'A', 'M', 'N'},
@@ -55,9 +55,9 @@ func NanoInit(path *C.char) {
 			PageSize:  storage.PageSize,
 			PageCount: 1,
 		}
-		storage.WriteHeader(pager, h)
+		pager.WriteHeader(h)
 
-		catalogPage, _ := storage.AllocatePage(pager, h)
+		catalogPage, _ := pager.AllocatePage(h)
 		rawCatalog := make([]byte, storage.PageSize)
 		storage.InitDataPage(rawCatalog)
 		pager.WritePage(catalogPage, rawCatalog)
@@ -105,7 +105,7 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 		return 0
 	}
 
-	newColPageNum, err := storage.AllocatePage(pager, header)
+	newColPageNum, err := pager.AllocatePage(header)
 	if err != nil {
 		return -1
 	}
@@ -142,7 +142,7 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 		}
 
 		// if no page then allocate new page for
-		newPageId, err := storage.AllocatePage(pager, header)
+		newPageId, err := pager.AllocatePage(header)
 		if err != nil {
 			return -1
 		}

@@ -115,7 +115,7 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 
 		// allocate a new page if no next page
 
-		newPageId, err := storage.AllocatePage(c.Pager, c.Header)
+		newPageId, err := c.Pager.AllocatePage(c.Header)
 
 		if err != nil {
 			return 0, err
@@ -149,8 +149,6 @@ func (c *Collection) FindById(docId uint64) (map[string]any, error) {
 	if !exists {
 		return nil, nil
 	}
-
-	fmt.Println(loc.Page, loc.Slot)
 
 	pageData, err := c.Pager.ReadPage(loc.Page)
 	if err != nil {
@@ -215,7 +213,7 @@ func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 		}
 
 		// allocate new page if no next page
-		newPageId, err := storage.AllocatePage(c.Pager, c.Header)
+		newPageId, err := c.Pager.AllocatePage(c.Header)
 		if err != nil {
 			return err
 		}

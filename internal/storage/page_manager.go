@@ -18,7 +18,7 @@ type PageHeader struct {
 	NextPage  uint32
 }
 
-func WriteHeader(p *Pager, h *DBHeader) error {
+func (p *Pager) WriteHeader(h *DBHeader) error {
 	buff := make([]byte, PageSize)
 	copy(buff[0:4], h.Magic[:])
 
@@ -30,7 +30,7 @@ func WriteHeader(p *Pager, h *DBHeader) error {
 	return p.WritePage(0, buff)
 }
 
-func ReadHeader(p *Pager) (*DBHeader, error) {
+func (p *Pager) ReadHeader() (*DBHeader, error) {
 	buff, err := p.ReadPage(0)
 	if err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ func ReadHeader(p *Pager) (*DBHeader, error) {
 	return h, nil
 }
 
-func AllocatePage(p *Pager, h *DBHeader) (uint32, error) {
+func (p *Pager) AllocatePage(h *DBHeader) (uint32, error) {
 
 	if h.FreeList != 0 {
 		pageNum := h.FreeList
@@ -54,7 +54,7 @@ func AllocatePage(p *Pager, h *DBHeader) (uint32, error) {
 		}
 
 		h.FreeList = binary.LittleEndian.Uint32(buff[0:4])
-		err = WriteHeader(p, h)
+		err = p.WriteHeader(h)
 		if err != nil {
 			return 0, err
 		}
@@ -65,7 +65,7 @@ func AllocatePage(p *Pager, h *DBHeader) (uint32, error) {
 	pageNum := h.PageCount
 
 	h.PageCount++
-	err := WriteHeader(p, h)
+	err := p.WriteHeader(h)
 	if err != nil {
 		return 0, err
 	}
@@ -80,7 +80,7 @@ func AllocatePage(p *Pager, h *DBHeader) (uint32, error) {
 	return pageNum, nil
 }
 
-func FreePage(p *Pager, h *DBHeader, pageNum uint32) error {
+func (p *Pager) FreePage(h *DBHeader, pageNum uint32) error {
 	buff := make([]byte, PageSize)
 	binary.LittleEndian.PutUint32(buff[0:4], h.FreeList)
 
@@ -88,7 +88,7 @@ func FreePage(p *Pager, h *DBHeader, pageNum uint32) error {
 		return err
 	}
 	h.FreeList = pageNum
-	return WriteHeader(p, h)
+	return p.WriteHeader(h)
 }
 
 func InitDataPage(page []byte) {
