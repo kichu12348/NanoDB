@@ -115,10 +115,6 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 				return 0, err
 			}
 
-			if c.BTree.RootPage != c.RootPage {
-				c.RootPage = c.BTree.RootPage
-			}
-
 			// write back the page if insertion successful
 			err = c.Pager.WritePage(currentPageId, pageData)
 			storage.ReleasePageBuffer(pageData)
@@ -342,7 +338,7 @@ func (c *Collection) DeleteById(id uint64) error {
 }
 
 func (c *Collection) Find(query map[string]any, opts *FindOptions) ([]map[string]any, []uint64, error) {
-	var results []map[string]any
+	var results []map[string]any = make([]map[string]any, 0)
 	var docIds []uint64
 
 	isThereLimit := false

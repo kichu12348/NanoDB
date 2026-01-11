@@ -47,7 +47,9 @@ func ReleasePageBuffer(b []byte) {
 }
 
 func GetBuff() []byte {
-	return pagePool.Get().([]byte)
+	b := pagePool.Get().([]byte)
+	clear(b)
+	return b
 }
 
 func (p *Pager) WritePage(pageNum uint32, data []byte) error {
