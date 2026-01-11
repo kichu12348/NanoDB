@@ -37,7 +37,12 @@ func NewCollection(name string, root uint32, indexRoot uint32, pager *storage.Pa
 	curr := lastPage
 
 	for curr != 0 {
-		page, _ := pager.ReadPage(curr)
+		page, err := pager.ReadPage(curr)
+
+		if err != nil {
+			return nil, err
+		}
+
 		nextPage := binary.LittleEndian.Uint32(page[4:8])
 		if nextPage == 0 {
 			lastPage = curr

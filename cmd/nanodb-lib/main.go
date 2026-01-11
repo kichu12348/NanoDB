@@ -58,7 +58,10 @@ func NanoInit(path *C.char) {
 		}
 		pager.WriteHeader(h)
 
-		catalogPage, _ := pager.AllocatePage(h)
+		catalogPage, err := pager.AllocatePage(h)
+		if err != nil {
+			panic(err)
+		}
 		rawCatalog := storage.GetBuff()
 		defer storage.ReleasePageBuffer(rawCatalog)
 
@@ -116,6 +119,7 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 
 	storage.InitDataPage(empty)
 	if err := pager.WritePage(newColPageNum, empty); err != nil {
+		storage.ReleasePageBuffer(empty)
 		return -1
 	}
 
@@ -143,9 +147,16 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 	var currentPageNum uint32 = 1
 	for {
 		entry := record.EncodeCollectionEntry(cName, newColPageNum, newIndexRootPage)
-		page, _ := pager.ReadPage(currentPageNum)
+		page, err := pager.ReadPage(currentPageNum)
+		if err != nil {
+			return -1
+		}
 
-		success, _ := record.InsertRecord(page, 0, entry)
+		success, err := record.InsertRecord(page, 0, entry)
+		if err != nil {
+			storage.ReleasePageBuffer(page)
+			return -1
+		}
 
 		// if success record inserted
 		if success {
@@ -164,12 +175,14 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 
 		if nextPage != 0 {
 			currentPageNum = nextPage
+			storage.ReleasePageBuffer(page)
 			continue
 		}
 
 		// if no page then allocate new page for
 		newPageId, err := pager.AllocatePage(header)
 		if err != nil {
+			storage.ReleasePageBuffer(page)
 			return -1
 		}
 
