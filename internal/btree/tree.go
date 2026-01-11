@@ -264,7 +264,18 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 			}
 			insertIdx++
 		}
-		n.InsertInternalCell(insertIdx, key, childPage)
+		if insertIdx == n.NumCells() {
+			oldRightChild := n.RightChild()
+			n.InsertInternalCell(insertIdx, key, oldRightChild)
+			n.SetRightChild(childPage)
+		} else {
+			_, oldChild := n.GetInternalCell(insertIdx)
+
+			n.InsertInternalCell(insertIdx, key, oldChild)
+
+			offset := 12 + ((insertIdx + 1) * INTERNAL_CELL_SIZE)
+			binary.LittleEndian.PutUint32(n.bytes[offset+8:offset+12], childPage)
+		}
 
 		if err := t.Pager.WritePage(pageId, n.bytes); err != nil {
 			return 0, 0, err
@@ -274,17 +285,6 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 	}
 
 	//doesnt fit in node
-
-	newPageId, err := t.Pager.AllocatePage(t.Header)
-
-	if err != nil {
-		return 0, 0, err
-	}
-
-	newPageData := make([]byte, storage.PageSize)
-	newNode := NewNode(newPageData)
-
-	newNode.SetHeader(NodeTypeInternal, false)
 
 	type cell struct {
 		key       uint64
@@ -298,43 +298,55 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 		cells = append(cells, cell{key: k, childPage: p})
 	}
 
-	inserted := false
-	for i := range len(cells) {
-		if key < cells[i].key {
-			cells = append(cells[:i], append([]cell{{key, childPage}}, cells[i:]...)...)
-			inserted = true
+	currentRightChild := n.RightChild()
+
+	insertIdx := 0
+	for i, c := range cells {
+		if key < c.key {
+			insertIdx = i
 			break
 		}
+		insertIdx = i + 1
 	}
 
-	if !inserted {
-		cells = append(cells, cell{key, childPage})
+	if insertIdx == len(cells) {
+		cells = append(cells, cell{key: key, childPage: childPage})
+		currentRightChild = childPage
+	} else {
+		oldChild := cells[insertIdx].childPage
+		cells = append(cells[:insertIdx], append([]cell{{key, oldChild}}, cells[insertIdx:]...)...)
+		cells[insertIdx+1].childPage = childPage
 	}
 
-	oldRightChild := n.RightChild()
+	newPageId, err := t.Pager.AllocatePage(t.Header)
+
+	if err != nil {
+		return 0, 0, err
+	}
+
+	newPageData := make([]byte, storage.PageSize)
+	newNode := NewNode(newPageData)
+
+	newNode.SetHeader(NodeTypeInternal, false)
 
 	mid := len(cells) / 2
-
 	promotedKey := cells[mid].key
 
-	// Left node keeps: cells[0 : mid]
-	// Right node gets: cells[mid+1 : ]
-
 	n.SetNumCells(0)
+
+	cellsLen := len(cells)
 
 	for i := range mid {
 		n.InsertInternalCell(uint16(i), cells[i].key, cells[i].childPage)
 	}
-
 	n.SetRightChild(cells[mid].childPage)
 
 	rightIdx := uint16(0)
-	for i := mid + 1; i < len(cells); i++ {
+	for i := mid + 1; i < cellsLen; i++ {
 		newNode.InsertInternalCell(rightIdx, cells[i].key, cells[i].childPage)
 		rightIdx++
 	}
-
-	newNode.SetRightChild(oldRightChild)
+	newNode.SetRightChild(currentRightChild)
 
 	if err := t.Pager.WritePage(pageId, n.bytes); err != nil {
 		return 0, 0, err
@@ -389,9 +401,7 @@ func (t *Btree) updateLeafNode(n *Node, key uint64, pageId uint32, recPage uint3
 			binary.LittleEndian.PutUint32(n.bytes[offset+8:offset+12], recPage)
 			binary.LittleEndian.PutUint16(n.bytes[offset+12:offset+14], recSlot)
 
-			t.Pager.WritePage(pageId, n.bytes)
-
-			return nil
+			return t.Pager.WritePage(pageId, n.bytes)
 		}
 
 		if key > cellKey {
