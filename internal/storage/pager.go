@@ -2,12 +2,14 @@ package storage
 
 import (
 	"os"
+	"sync"
 )
 
 const PageSize = 4096
 
 type Pager struct {
 	file *os.File
+	mu   sync.Mutex
 }
 
 func OpenPager(filename string) (*Pager, error) {

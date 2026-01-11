@@ -45,6 +45,8 @@ func (p *Pager) ReadHeader() (*DBHeader, error) {
 }
 
 func (p *Pager) AllocatePage(h *DBHeader) (uint32, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
 
 	if h.FreeList != 0 {
 		pageNum := h.FreeList
@@ -94,4 +96,5 @@ func (p *Pager) FreePage(h *DBHeader, pageNum uint32) error {
 func InitDataPage(page []byte) {
 	binary.LittleEndian.PutUint16(page[0:2], 0)                // slot count
 	binary.LittleEndian.PutUint16(page[2:4], uint16(PageSize)) // free start
+	binary.LittleEndian.PutUint32(page[4:8], 0)
 }

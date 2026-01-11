@@ -239,6 +239,8 @@ func (t *Btree) insertIntoLeaf(n *Node, pageId uint32, key uint64, recPage uint3
 		return 0, 0, err
 	}
 
+	n.SetRightChild(newPageId)
+
 	if err := t.Pager.WritePage(pageId, n.bytes); err != nil {
 		return 0, 0, err
 	}
@@ -301,6 +303,7 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 		if key < cells[i].key {
 			cells = append(cells[:i], append([]cell{{key, childPage}}, cells[i:]...)...)
 			inserted = true
+			break
 		}
 	}
 
