@@ -59,7 +59,9 @@ func NanoInit(path *C.char) {
 		pager.WriteHeader(h)
 
 		catalogPage, _ := pager.AllocatePage(h)
-		rawCatalog := make([]byte, storage.PageSize)
+		rawCatalog := storage.GetBuff()
+		defer storage.ReleasePageBuffer(rawCatalog)
+
 		storage.InitDataPage(rawCatalog)
 		pager.WritePage(catalogPage, rawCatalog)
 	}
@@ -110,18 +112,21 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 		return -1
 	}
 
-	empty := make([]byte, header.PageSize)
+	empty := storage.GetBuff()
+
 	storage.InitDataPage(empty)
 	if err := pager.WritePage(newColPageNum, empty); err != nil {
 		return -1
 	}
+
+	storage.ReleasePageBuffer(empty)
 
 	newIndexRootPage, err := pager.AllocatePage(header)
 	if err != nil {
 		return -1
 	}
 
-	newIndexData := make([]byte, storage.PageSize)
+	newIndexData := storage.GetBuff()
 
 	node := btree.NewNode(newIndexData)
 
@@ -129,23 +134,28 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 	node.SetNumCells(0)
 
 	if err := pager.WritePage(newIndexRootPage, newIndexData); err != nil {
+		storage.ReleasePageBuffer(newIndexData)
 		return -1
 	}
+
+	storage.ReleasePageBuffer(newIndexData)
 
 	var currentPageNum uint32 = 1
 	for {
 		entry := record.EncodeCollectionEntry(cName, newColPageNum, newIndexRootPage)
-		page, _ := pager.ReadPage(uint32(currentPageNum))
+		page, _ := pager.ReadPage(currentPageNum)
 
 		success, _ := record.InsertRecord(page, 0, entry)
 
 		// if success record inserted
 		if success {
 			if err := pager.WritePage(currentPageNum, page); err != nil {
+				storage.ReleasePageBuffer(page)
 				return -1
 			}
 			newCol, _ := collection.NewCollection(cName, newColPageNum, newIndexRootPage, pager, header)
 			openCollections[cName] = newCol
+			storage.ReleasePageBuffer(page)
 			return 1
 		}
 
@@ -163,19 +173,25 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 			return -1
 		}
 
-		emptyCatPage := make([]byte, header.PageSize)
+		emptyCatPage := storage.GetBuff()
 		storage.InitDataPage(emptyCatPage)
 
 		if err := pager.WritePage(newPageId, emptyCatPage); err != nil {
+			storage.ReleasePageBuffer(page)
+			storage.ReleasePageBuffer(emptyCatPage)
 			return -1
 		}
 
 		binary.LittleEndian.PutUint32(page[4:8], newPageId)
 
 		if err := pager.WritePage(currentPageNum, page); err != nil {
+			storage.ReleasePageBuffer(page)
+			storage.ReleasePageBuffer(emptyCatPage)
 			return -1
 		}
 		currentPageNum = newPageId
+		storage.ReleasePageBuffer(page)
+		storage.ReleasePageBuffer(emptyCatPage)
 	}
 }
 

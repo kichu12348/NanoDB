@@ -127,6 +127,9 @@ func DecodeCollectionEntry(data []byte) CollectionEntry {
 func GetAllCollections(p *storage.Pager) ([]CollectionEntry, error) {
 
 	pageData, err := p.ReadPage(1)
+
+	defer storage.ReleasePageBuffer(pageData)
+
 	if err != nil {
 		return nil, err
 	}

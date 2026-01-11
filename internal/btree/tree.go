@@ -34,10 +34,16 @@ func (t *Btree) SearchKey(key uint64) (SearchResult, error) {
 		node := NewNode(page)
 
 		if node.IsLeaf() {
-			return t.searchLeafNode(node, key)
+			res, err := t.searchLeafNode(node, key)
+			storage.ReleasePageBuffer(page)
+			return res, err
 		}
 
-		currPageNum = t.searchInternalNode(node, key)
+		nextPage := t.searchInternalNode(node, key)
+
+		storage.ReleasePageBuffer(page)
+
+		currPageNum = nextPage
 	}
 }
 
@@ -99,7 +105,9 @@ func (t *Btree) Insert(key uint64, recPage uint32, recSlot uint16) error {
 		return err
 	}
 
-	newNodeData := make([]byte, storage.PageSize)
+	newNodeData := storage.GetBuff()
+	defer storage.ReleasePageBuffer(newNodeData)
+
 	newRoot := NewNode(newNodeData)
 
 	newRoot.SetHeader(NodeTypeInternal, true)
@@ -123,6 +131,7 @@ func (t *Btree) insertRecursive(pageId uint32, key uint64, recPage uint32, recSl
 	if err != nil {
 		return 0, 0, err
 	}
+	defer storage.ReleasePageBuffer(page)
 	node := NewNode(page)
 
 	//if leaf insert into leaf
@@ -187,7 +196,8 @@ func (t *Btree) insertIntoLeaf(n *Node, pageId uint32, key uint64, recPage uint3
 		return 0, 0, err
 	}
 
-	newPageData := make([]byte, storage.PageSize)
+	newPageData := storage.GetBuff()
+	defer storage.ReleasePageBuffer(newPageData)
 	newNode := NewNode(newPageData)
 
 	// mark as leaf not root
@@ -328,7 +338,9 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 		return 0, 0, err
 	}
 
-	newPageData := make([]byte, storage.PageSize)
+	newPageData := storage.GetBuff()
+	defer storage.ReleasePageBuffer(newPageData)
+
 	newNode := NewNode(newPageData)
 
 	newNode.SetHeader(NodeTypeInternal, false)
@@ -376,14 +388,12 @@ func (t *Btree) Update(key uint64, recPage uint32, recSlot uint16) error {
 		if node.IsLeaf() {
 			err := t.updateLeafNode(node, key, currPageNum, recPage, recSlot)
 
-			if err != nil {
-				return err
-			}
-
-			return nil
+			storage.ReleasePageBuffer(page)
+			return err
 		}
 
 		currPageNum = t.searchInternalNode(node, key)
+		storage.ReleasePageBuffer(page)
 	}
 }
 
@@ -431,14 +441,13 @@ func (t *Btree) Delete(key uint64) error {
 		if node.IsLeaf() {
 			err := t.deleteFromLeaf(node, currPageNum, key)
 
-			if err != nil {
-				return err
-			}
+			storage.ReleasePageBuffer(page)
 
-			return nil
+			return err
 		}
 
 		currPageNum = t.searchInternalNode(node, key)
+		storage.ReleasePageBuffer(page)
 	}
 }
 

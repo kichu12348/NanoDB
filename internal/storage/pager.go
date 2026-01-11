@@ -12,6 +12,12 @@ type Pager struct {
 	mu   sync.Mutex
 }
 
+var pagePool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, PageSize)
+	},
+}
+
 func OpenPager(filename string) (*Pager, error) {
 	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644)
 
@@ -23,12 +29,21 @@ func OpenPager(filename string) (*Pager, error) {
 }
 
 func (p *Pager) ReadPage(pageNum uint32) ([]byte, error) {
-	buff := make([]byte, PageSize)
+	buff := pagePool.Get().([]byte)
 	_, err := p.file.ReadAt(buff, int64(pageNum)*PageSize)
 	if err != nil {
+		pagePool.Put(buff)
 		return nil, err
 	}
 	return buff, nil
+}
+
+func ReleasePageBuffer(b []byte) {
+	pagePool.Put(b)
+}
+
+func GetBuff() []byte {
+	return pagePool.Get().([]byte)
 }
 
 func (p *Pager) WritePage(pageNum uint32, data []byte) error {
