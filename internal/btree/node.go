@@ -27,7 +27,7 @@ func (n *Node) SetHeader(nodeType uint8, isRoot bool) {
 }
 
 func (n *Node) IsLeaf() bool {
-	return n.bytes[0] == 2
+	return n.bytes[0] == NodeTypeLeaf
 }
 
 func (n *Node) NumCells() uint16 {

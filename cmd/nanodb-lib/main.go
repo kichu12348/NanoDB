@@ -125,7 +125,7 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 
 	node := btree.NewNode(newIndexData)
 
-	node.SetHeader(btree.INTERNAL_CELL_SIZE, true)
+	node.SetHeader(btree.NodeTypeInternal, true)
 	node.SetNumCells(0)
 
 	if err := pager.WritePage(newIndexRootPage, newIndexData); err != nil {
