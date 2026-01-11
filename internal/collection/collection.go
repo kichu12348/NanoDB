@@ -25,12 +25,12 @@ type FindOptions struct {
 	Skip  uint
 }
 
-func NewCollection(name string, root uint32, pager *storage.Pager, header *storage.DBHeader) (*Collection, error) {
+func NewCollection(name string, root uint32, indexRoot uint32, pager *storage.Pager, header *storage.DBHeader) (*Collection, error) {
 
 	b := &btree.Btree{
 		Pager:    pager,
 		Header:   header,
-		RootPage: root,
+		RootPage: indexRoot,
 	}
 
 	lastPage := root

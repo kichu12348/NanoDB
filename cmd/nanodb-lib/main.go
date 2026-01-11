@@ -11,6 +11,7 @@ import (
 	"sync"
 	"unsafe"
 
+	"nanodb/internal/btree"
 	"nanodb/internal/collection"
 	"nanodb/internal/record"
 	"nanodb/internal/storage"
@@ -61,13 +62,12 @@ func NanoInit(path *C.char) {
 		rawCatalog := make([]byte, storage.PageSize)
 		storage.InitDataPage(rawCatalog)
 		pager.WritePage(catalogPage, rawCatalog)
-
 	}
 
 	header = h
 
 	// Load Catalog
-	cat, err := collection.NewCollection("_catalog", 1, pager, header)
+	cat, err := collection.NewCollection("_catalog", 1, 0, pager, header) //collection insert bypasses the btree so this is fine
 	if err != nil {
 		panic(err)
 	}
@@ -85,7 +85,7 @@ func loadExistingCollectionsInternal() {
 	}
 
 	for _, col := range collections {
-		loadedCol, err := collection.NewCollection(col.Name, col.RootPage, pager, header)
+		loadedCol, err := collection.NewCollection(col.Name, col.RootPage, col.IndexRoot, pager, header)
 		if err != nil {
 			continue
 		}
@@ -116,9 +116,25 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 		return -1
 	}
 
+	newIndexRootPage, err := pager.AllocatePage(header)
+	if err != nil {
+		return -1
+	}
+
+	newIndexData := make([]byte, storage.PageSize)
+
+	node := btree.NewNode(newIndexData)
+
+	node.SetHeader(btree.INTERNAL_CELL_SIZE, true)
+	node.SetNumCells(0)
+
+	if err := pager.WritePage(newIndexRootPage, newIndexData); err != nil {
+		return -1
+	}
+
 	var currentPageNum uint32 = 1
 	for {
-		entry := record.EncodeCollectionEntry(cName, newColPageNum)
+		entry := record.EncodeCollectionEntry(cName, newColPageNum, newIndexRootPage)
 		page, _ := pager.ReadPage(uint32(currentPageNum))
 
 		success, _ := record.InsertRecord(page, 0, entry)
@@ -128,7 +144,7 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 			if err := pager.WritePage(currentPageNum, page); err != nil {
 				return -1
 			}
-			newCol, _ := collection.NewCollection(cName, newColPageNum, pager, header)
+			newCol, _ := collection.NewCollection(cName, newColPageNum, newIndexRootPage, pager, header)
 			openCollections[cName] = newCol
 			return 1
 		}

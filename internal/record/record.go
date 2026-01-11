@@ -15,8 +15,9 @@ type Slot struct {
 }
 
 type CollectionEntry struct {
-	Name     string
-	RootPage uint32
+	Name      string
+	RootPage  uint32
+	IndexRoot uint32
 }
 
 func isDeleted(len uint16) bool {
@@ -106,19 +107,21 @@ func ReadRecord(page []byte, slot uint16) (uint64, []byte, bool) {
 	return docId, data, false
 }
 
-func EncodeCollectionEntry(name string, root uint32) []byte { // [name length (1 byte), name (n bytes), root page (4 bytes)]
-	buff := make([]byte, len(name)+5)
+func EncodeCollectionEntry(name string, root uint32, indexRoot uint32) []byte { // [name length (1 byte), name (n bytes), root page (4 bytes), index page (4 bytes)]
+	buff := make([]byte, len(name)+9)
 	buff[0] = byte(len(name))    // name length
 	copy(buff[1:], []byte(name)) // name
 	writeUint32(buff[1+len(name):], root)
+	writeUint32(buff[5+len(name):], indexRoot)
 	return buff
 }
 
 func DecodeCollectionEntry(data []byte) CollectionEntry {
 	nameLen := int(data[0])
 	name := string(data[1 : 1+nameLen])
-	root := binary.LittleEndian.Uint32(data[1+nameLen:])
-	return CollectionEntry{name, root}
+	root := binary.LittleEndian.Uint32(data[1+nameLen : 5+nameLen])
+	indexRoot := binary.LittleEndian.Uint32(data[5+nameLen:])
+	return CollectionEntry{name, root, indexRoot}
 }
 
 func GetAllCollections(p *storage.Pager) ([]CollectionEntry, error) {
