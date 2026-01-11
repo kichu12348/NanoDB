@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"fmt"
 	"os"
 	"sync"
 )
@@ -39,6 +40,9 @@ func (p *Pager) ReadPage(pageNum uint32) ([]byte, error) {
 }
 
 func ReleasePageBuffer(b []byte) {
+	if cap(b) != PageSize {
+		panic(fmt.Sprintf("ReleasePageBuffer: attempting to release invalid buffer with cap %d", cap(b)))
+	}
 	pagePool.Put(b)
 }
 

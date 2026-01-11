@@ -56,7 +56,9 @@ func NanoInit(path *C.char) {
 			PageSize:  storage.PageSize,
 			PageCount: 1,
 		}
-		pager.WriteHeader(h)
+		if err := pager.WriteHeader(h); err != nil {
+			panic(err)
+		}
 
 		catalogPage, err := pager.AllocatePage(h)
 		if err != nil {
@@ -66,7 +68,9 @@ func NanoInit(path *C.char) {
 		defer storage.ReleasePageBuffer(rawCatalog)
 
 		storage.InitDataPage(rawCatalog)
-		pager.WritePage(catalogPage, rawCatalog)
+		if err := pager.WritePage(catalogPage, rawCatalog); err != nil {
+			panic(err)
+		}
 	}
 
 	header = h

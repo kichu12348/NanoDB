@@ -27,13 +27,11 @@ func (p *Pager) WriteHeader(h *DBHeader) error {
 	binary.LittleEndian.PutUint32(buff[6:10], h.PageSize)
 	binary.LittleEndian.PutUint32(buff[10:14], h.PageCount)
 	binary.LittleEndian.PutUint32(buff[14:18], h.FreeList)
-
 	return p.WritePage(0, buff)
 }
 
 func (p *Pager) ReadHeader() (*DBHeader, error) {
 	buff, err := p.ReadPage(0)
-	defer ReleasePageBuffer(buff)
 
 	if err != nil {
 		return nil, err
@@ -44,6 +42,8 @@ func (p *Pager) ReadHeader() (*DBHeader, error) {
 	h.PageSize = binary.LittleEndian.Uint32(buff[6:10])
 	h.PageCount = binary.LittleEndian.Uint32(buff[10:14])
 	h.FreeList = binary.LittleEndian.Uint32(buff[14:18])
+
+	ReleasePageBuffer(buff)
 	return h, nil
 }
 
@@ -54,7 +54,6 @@ func (p *Pager) AllocatePage(h *DBHeader) (uint32, error) {
 	if h.FreeList != 0 {
 		pageNum := h.FreeList
 		buff, err := p.ReadPage(pageNum)
-		defer ReleasePageBuffer(buff)
 
 		if err != nil {
 			return 0, err
@@ -66,6 +65,7 @@ func (p *Pager) AllocatePage(h *DBHeader) (uint32, error) {
 			return 0, err
 		}
 
+		ReleasePageBuffer(buff)
 		return pageNum, nil
 	}
 
@@ -78,13 +78,12 @@ func (p *Pager) AllocatePage(h *DBHeader) (uint32, error) {
 	}
 
 	emptyPage := GetBuff()
-	defer ReleasePageBuffer(emptyPage)
 	err = p.WritePage(pageNum, emptyPage)
 
 	if err != nil {
 		return 0, err
 	}
-
+	ReleasePageBuffer(emptyPage)
 	return pageNum, nil
 }
 
