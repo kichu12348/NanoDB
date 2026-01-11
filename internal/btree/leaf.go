@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 )
 
+// first 8 bytes is header
+
 const LEAF_CELL_SIZE = 14 // 8 byte ID + 4 byte Page + 2 byte Slot
 
 func (n *Node) GetLeafCell(index uint16) (uint64, uint32, uint16) {

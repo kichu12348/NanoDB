@@ -10,6 +10,9 @@ type Node struct {
 	bytes []byte
 }
 
+const NodeTypeLeaf = 2
+const NodeTypeInternal = 1
+
 func NewNode(data []byte) *Node {
 	return &Node{bytes: data}
 }

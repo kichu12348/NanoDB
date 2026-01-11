@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"nanodb/internal/index"
+	"nanodb/internal/btree"
 	"nanodb/internal/record"
 	"nanodb/internal/storage"
 	"sync"
@@ -16,7 +16,7 @@ type Collection struct {
 	LastPage uint32
 	Pager    *storage.Pager
 	Header   *storage.DBHeader
-	Index    index.Index
+	BTree    *btree.Btree
 	mu       sync.RWMutex
 }
 
@@ -26,9 +26,11 @@ type FindOptions struct {
 }
 
 func NewCollection(name string, root uint32, pager *storage.Pager, header *storage.DBHeader) (*Collection, error) {
-	idx, err := index.BuildIndex(pager, root)
-	if err != nil {
-		return nil, err
+
+	b := &btree.Btree{
+		Pager:    pager,
+		Header:   header,
+		RootPage: root,
 	}
 
 	lastPage := root
@@ -49,7 +51,7 @@ func NewCollection(name string, root uint32, pager *storage.Pager, header *stora
 		RootPage: root,
 		Pager:    pager,
 		Header:   header,
-		Index:    idx,
+		BTree:    b,
 		LastPage: lastPage,
 	}, nil
 }
@@ -99,7 +101,15 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 			//update index
 			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
 
-			c.Index[docId] = index.DocLocation{Page: currentPageId, Slot: slotCount - 1}
+			err := c.BTree.Insert(docId, currentPageId, slotCount-1)
+			if err != nil {
+				return 0, err
+			}
+
+			if c.BTree.RootPage != c.RootPage {
+				c.RootPage = c.BTree.RootPage
+			}
+
 			// write back the page if insertion successful
 
 			return docId, c.Pager.WritePage(currentPageId, pageData)
@@ -144,17 +154,22 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 func (c *Collection) FindById(docId uint64) (map[string]any, error) {
 	c.mu.RLock()         // lock for reading
 	defer c.mu.RUnlock() // unlock after function ends
-	loc, exists := c.Index[docId]
 
-	if !exists {
-		return nil, nil
-	}
+	res, err := c.BTree.SearchKey(docId)
 
-	pageData, err := c.Pager.ReadPage(loc.Page)
 	if err != nil {
 		return nil, err
 	}
-	_, data, deleted := record.ReadRecord(pageData, loc.Slot)
+
+	if !res.Found {
+		return nil, nil
+	}
+
+	pageData, err := c.Pager.ReadPage(res.PageNum)
+	if err != nil {
+		return nil, err
+	}
+	_, data, deleted := record.ReadRecord(pageData, res.SlotNum)
 
 	if deleted {
 		return nil, nil
@@ -171,7 +186,14 @@ func (c *Collection) FindById(docId uint64) (map[string]any, error) {
 func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 	c.mu.Lock()         // lock for writing
 	defer c.mu.Unlock() // unlock after function ends
-	if _, exists := c.Index[id]; !exists {
+
+	res, err := c.BTree.SearchKey(id)
+
+	if err != nil {
+		return err
+	}
+
+	if !res.Found {
 		return fmt.Errorf("document with ID %d does not exist", id)
 	}
 
@@ -198,9 +220,13 @@ func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 		//if update successful, write back and update index
 		if success {
 			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
-			prevLoc := c.Index[id]
-			record.MarkSlotDeleted(pageData, prevLoc.Slot)
-			c.Index[id] = index.DocLocation{Page: currPageId, Slot: slotCount - 1}
+
+			record.MarkSlotDeleted(pageData, res.SlotNum)
+
+			if err := c.BTree.Insert(id, currPageId, slotCount-1); err != nil {
+				return err
+			}
+
 			return c.Pager.WritePage(currPageId, pageData)
 		}
 
@@ -238,24 +264,28 @@ func (c *Collection) DeleteById(id uint64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	loc, exists := c.Index[id]
-	if !exists {
-		return fmt.Errorf("document with ID %d does not exist", id)
-	}
+	res, err := c.BTree.SearchKey(id)
 
-	page, err := c.Pager.ReadPage(loc.Page)
 	if err != nil {
 		return err
 	}
 
-	record.MarkSlotDeleted(page, loc.Slot)
+	if !res.Found {
+		return fmt.Errorf("document with ID %d does not exist", id)
+	}
 
-	if err := c.Pager.WritePage(loc.Page, page); err != nil {
+	page, err := c.Pager.ReadPage(res.PageNum)
+	if err != nil {
 		return err
 	}
 
-	delete(c.Index, id)
-	return nil
+	record.MarkSlotDeleted(page, res.SlotNum)
+
+	if err := c.Pager.WritePage(res.PageNum, page); err != nil {
+		return err
+	}
+
+	return c.BTree.Delete(id)
 }
 
 func (c *Collection) Find(query map[string]any, opts *FindOptions) ([]map[string]any, []uint64, error) {
