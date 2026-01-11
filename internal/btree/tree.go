@@ -18,7 +18,7 @@ type SearchResult struct {
 	Found   bool
 }
 
-const MAX_LEAF_CELLS = (storage.PageSize - 8) / LEAF_CELL_SIZE
+const MAX_LEAF_CELLS = (storage.PageSize - 12) / LEAF_CELL_SIZE
 const MAX_INTERNAL_CELLS = (storage.PageSize - 12) / INTERNAL_CELL_SIZE
 
 func (t *Btree) SearchKey(key uint64) (SearchResult, error) {
@@ -384,7 +384,7 @@ func (t *Btree) updateLeafNode(n *Node, key uint64, pageId uint32, recPage uint3
 		cellKey, _, _ := n.GetLeafCell(mid)
 		if cellKey == key {
 
-			offset := 8 + mid*LEAF_CELL_SIZE
+			offset := 12 + mid*LEAF_CELL_SIZE
 
 			binary.LittleEndian.PutUint32(n.bytes[offset+8:offset+12], recPage)
 			binary.LittleEndian.PutUint16(n.bytes[offset+12:offset+14], recSlot)
@@ -452,9 +452,9 @@ func (t *Btree) deleteFromLeaf(n *Node, pageId uint32, key uint64) error {
 		return fmt.Errorf("key %d not found", key)
 	}
 
-	offsetStart := 8 + (foundIdx * LEAF_CELL_SIZE)
-	offsetEnd := 8 + (foundIdx + 1*LEAF_CELL_SIZE)
-	totalEnd := 8 + (numCells * LEAF_CELL_SIZE)
+	offsetStart := 12 + (foundIdx * LEAF_CELL_SIZE)
+	offsetEnd := 12 + ((foundIdx + 1) * LEAF_CELL_SIZE)
+	totalEnd := 12 + (numCells * LEAF_CELL_SIZE)
 
 	copy(n.bytes[offsetStart:], n.bytes[offsetEnd:totalEnd])
 

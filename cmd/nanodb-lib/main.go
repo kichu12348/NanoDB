@@ -125,7 +125,7 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 
 	node := btree.NewNode(newIndexData)
 
-	node.SetHeader(btree.NodeTypeInternal, true)
+	node.SetHeader(btree.NodeTypeLeaf, true)
 	node.SetNumCells(0)
 
 	if err := pager.WritePage(newIndexRootPage, newIndexData); err != nil {
@@ -375,7 +375,8 @@ func NanoUpdateById(colName *C.char, docId C.longlong, jsonStr *C.char) *C.char 
 	errOnUpdate := col.UpdateById(uint64(docId), doc)
 
 	if errOnUpdate != nil {
-		return nil
+		panic(errOnUpdate)
+		//return nil
 	}
 
 	bytes, _ := json.Marshal(doc)

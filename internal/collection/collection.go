@@ -205,7 +205,7 @@ func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 		return err
 	}
 
-	currPageId := c.RootPage
+	currPageId := c.LastPage
 
 	for {
 		pageData, err := c.Pager.ReadPage(currPageId)
@@ -219,14 +219,26 @@ func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 		}
 		//if update successful, write back and update index
 		if success {
-			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
 
-			record.MarkSlotDeleted(pageData, res.SlotNum)
+			if currPageId == res.PageNum {
+				record.MarkSlotDeleted(pageData, res.SlotNum)
+			} else {
+				oldPageData, err := c.Pager.ReadPage(res.PageNum)
+				if err != nil {
+					return err
+				}
+				record.MarkSlotDeleted(oldPageData, res.SlotNum)
+				if err := c.Pager.WritePage(res.PageNum, oldPageData); err != nil {
+					return err
+				}
+			}
+
+			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
 
 			if err := c.BTree.Insert(id, currPageId, slotCount-1); err != nil {
 				return err
 			}
-
+			c.LastPage = currPageId
 			return c.Pager.WritePage(currPageId, pageData)
 		}
 
