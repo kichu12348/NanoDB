@@ -79,7 +79,7 @@ func GenerateRandomId(n int) uint64 {
 func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 	c.mu.Lock()         // lock for writing
 	defer c.mu.Unlock() // unlock after function ends
-	docId := GenerateRandomId(8)
+	docId := GenerateRandomId(6)
 
 	doc["_id"] = docId
 

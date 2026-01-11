@@ -112,6 +112,8 @@ func (t *Btree) Insert(key uint64, recPage uint32, recSlot uint16) error {
 
 	newRoot.SetHeader(NodeTypeInternal, true)
 
+	newRoot.SetNumCells(0)
+
 	//old root becomes left child
 	newRoot.InsertInternalCell(0, splitKey, t.RootPage)
 
@@ -202,6 +204,9 @@ func (t *Btree) insertIntoLeaf(n *Node, pageId uint32, key uint64, recPage uint3
 
 	// mark as leaf not root
 	newNode.SetHeader(NodeTypeLeaf, false)
+
+	// set cells to 0
+	newNode.SetNumCells(0)
 
 	//split cells in half
 
@@ -344,6 +349,8 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 	newNode := NewNode(newPageData)
 
 	newNode.SetHeader(NodeTypeInternal, false)
+
+	newNode.SetNumCells(0)
 
 	mid := cellLen / 2
 	promotedKey := cells[mid].key
