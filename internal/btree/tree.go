@@ -293,7 +293,9 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 
 	var cells []cell
 
-	for i := range n.NumCells() {
+	cellLen := n.NumCells()
+
+	for i := range cellLen {
 		k, p := n.GetInternalCell(i)
 		cells = append(cells, cell{key: k, childPage: p})
 	}
@@ -309,7 +311,7 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 		insertIdx = i + 1
 	}
 
-	if insertIdx == len(cells) {
+	if insertIdx == int(cellLen) {
 		cells = append(cells, cell{key: key, childPage: childPage})
 		currentRightChild = childPage
 	} else {
@@ -317,6 +319,8 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 		cells = append(cells[:insertIdx], append([]cell{{key, oldChild}}, cells[insertIdx:]...)...)
 		cells[insertIdx+1].childPage = childPage
 	}
+
+	cellLen++
 
 	newPageId, err := t.Pager.AllocatePage(t.Header)
 
@@ -329,12 +333,10 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 
 	newNode.SetHeader(NodeTypeInternal, false)
 
-	mid := len(cells) / 2
+	mid := cellLen / 2
 	promotedKey := cells[mid].key
 
 	n.SetNumCells(0)
-
-	cellsLen := len(cells)
 
 	for i := range mid {
 		n.InsertInternalCell(uint16(i), cells[i].key, cells[i].childPage)
@@ -342,7 +344,7 @@ func (t *Btree) insertIntoInternal(n *Node, pageId uint32, key uint64, childPage
 	n.SetRightChild(cells[mid].childPage)
 
 	rightIdx := uint16(0)
-	for i := mid + 1; i < cellsLen; i++ {
+	for i := mid + 1; i < cellLen; i++ {
 		newNode.InsertInternalCell(rightIdx, cells[i].key, cells[i].childPage)
 		rightIdx++
 	}
