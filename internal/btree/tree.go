@@ -456,6 +456,12 @@ func (t *Btree) deleteFromLeaf(n *Node, pageId uint32, key uint64) error {
 			break
 		}
 
+		if key > cellKey {
+			low = mid + 1
+		} else if key < cellKey {
+			high = mid
+		}
+
 	}
 
 	if foundIdx == -1 {

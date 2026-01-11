@@ -235,7 +235,7 @@ func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 
 			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
 
-			if err := c.BTree.Insert(id, currPageId, slotCount-1); err != nil {
+			if err := c.BTree.Update(id, currPageId, slotCount-1); err != nil {
 				return err
 			}
 			c.LastPage = currPageId
