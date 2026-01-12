@@ -270,18 +270,19 @@ func NanoInsertMany(colName *C.char, jsonStr *C.char) *C.char {
 		return nil
 	}
 
-	var docIds []uint64
+	docsIds, err := col.InsertMany(docs)
 
-	for _, doc := range docs {
-		docId, err := col.Insert(doc)
-
-		if err != nil {
-			break
-		}
-		docIds = append(docIds, docId)
+	if err != nil {
+		return nil
 	}
 
-	bytes, _ := json.Marshal(docIds)
+	ids := *docsIds
+
+	if ids == nil {
+		ids = []uint64{}
+	}
+
+	bytes, _ := json.Marshal(ids)
 	return C.CString(string(bytes))
 }
 
@@ -505,15 +506,10 @@ func NanoDeleteMany(colName *C.char, query *C.char) C.longlong {
 		return -1
 	}
 
-	_, docsIds, err := col.Find(jsonData, nil)
-	if err != nil {
-		return -1
-	}
+	success, err := col.FindAndDelete(jsonData)
 
-	for _, docId := range docsIds {
-		if err := col.DeleteById(uint64(docId)); err != nil {
-			break
-		}
+	if err != nil || !success {
+		return -1
 	}
 
 	return 1
