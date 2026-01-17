@@ -48,7 +48,6 @@ func ReleasePageBuffer(b []byte) {
 
 func GetBuff() []byte {
 	b := pagePool.Get().([]byte)
-	clear(b)
 	return b
 }
 
