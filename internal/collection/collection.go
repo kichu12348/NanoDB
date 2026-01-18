@@ -247,7 +247,6 @@ func (c *Collection) InsertMany(docs []map[string]any) (*[]uint64, error) {
 	for i < docLen {
 		page, err := c.Pager.ReadPage(currentPageId)
 		if err != nil {
-			storage.ReleasePageBuffer(page)
 			c.mu.Unlock()
 			return &[]uint64{}, err
 		}
