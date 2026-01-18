@@ -126,29 +126,31 @@ func DecodeCollectionEntry(data []byte) CollectionEntry {
 
 func GetAllCollections(p *storage.Pager) ([]CollectionEntry, error) {
 
-	pageData, err := p.ReadPage(1)
-
-	defer storage.ReleasePageBuffer(pageData)
-
-	if err != nil {
-		return nil, err
-	}
-
-	slotCount := binary.LittleEndian.Uint16(pageData[0:2])
-
+	currPageId := uint32(1)
 	var collections []CollectionEntry
 
-	for slot := range slotCount {
-		// 1. Read the Record
-		_, data, deleted := ReadRecord(pageData, slot)
-
-		if deleted {
-			continue
+	for currPageId != 0 {
+		pageData, err := p.ReadPage(currPageId)
+		if err != nil {
+			return nil, err
 		}
-		// 2. Decode the specific CollectionEntry format
-		// [NameLen (1)] [Name] [RootPage (4)]
-		entry := DecodeCollectionEntry(data)
-		collections = append(collections, entry)
+		slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+
+		for slot := range slotCount {
+			// 1. Read the Record
+			_, data, deleted := ReadRecord(pageData, slot)
+
+			if deleted {
+				continue
+			}
+			// 2. Decode the specific CollectionEntry format
+			// [NameLen (1)] [Name] [RootPage (4)]
+			entry := DecodeCollectionEntry(data)
+			collections = append(collections, entry)
+		}
+
+		currPageId = binary.LittleEndian.Uint32(pageData[4:8])
+		storage.ReleasePageBuffer(pageData)
 	}
 
 	return collections, nil
