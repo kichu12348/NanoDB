@@ -21,6 +21,9 @@ type SearchResult struct {
 const MAX_LEAF_CELLS = (storage.PageSize - 12) / LEAF_CELL_SIZE
 const MAX_INTERNAL_CELLS = (storage.PageSize - 12) / INTERNAL_CELL_SIZE
 
+const MIN_LEAF_CELLS = MAX_LEAF_CELLS / 2
+const MIN_INTERNAL_CELLS = MAX_INTERNAL_CELLS / 2
+
 func (t *Btree) SearchKey(key uint64) (SearchResult, error) {
 	currPageNum := t.RootPage
 
@@ -39,7 +42,7 @@ func (t *Btree) SearchKey(key uint64) (SearchResult, error) {
 			return res, err
 		}
 
-		nextPage := t.searchInternalNode(node, key)
+		nextPage, _ := t.searchInternalNode(node, key)
 
 		storage.ReleasePageBuffer(page)
 
@@ -74,17 +77,17 @@ func (t *Btree) searchLeafNode(n *Node, key uint64) (SearchResult, error) {
 	return SearchResult{Found: false}, nil
 }
 
-func (t *Btree) searchInternalNode(n *Node, key uint64) uint32 {
+func (t *Btree) searchInternalNode(n *Node, key uint64) (uint32, int) {
 	numCells := n.NumCells()
 
 	for i := range numCells {
 		cellKey, PageNum := n.GetInternalCell(i)
 
 		if key < cellKey {
-			return PageNum
+			return PageNum, int(i)
 		}
 	}
-	return n.RightChild()
+	return n.RightChild(), -1
 }
 
 func (t *Btree) Insert(key uint64, recPage uint32, recSlot uint16) error {
@@ -399,7 +402,7 @@ func (t *Btree) Update(key uint64, recPage uint32, recSlot uint16) error {
 			return err
 		}
 
-		currPageNum = t.searchInternalNode(node, key)
+		currPageNum, _ = t.searchInternalNode(node, key)
 		storage.ReleasePageBuffer(page)
 	}
 }
@@ -434,28 +437,60 @@ func (t *Btree) updateLeafNode(n *Node, key uint64, pageId uint32, recPage uint3
 }
 
 func (t *Btree) Delete(key uint64) error {
-	currPageNum := t.RootPage
+	_, err := t.deleteRecursive(t.RootPage, key)
+	return err
+}
 
-	for {
-		page, err := t.Pager.ReadPage(currPageNum)
+func (t *Btree) deleteRecursive(pageNum uint32, key uint64) (bool, error) {
 
-		if err != nil {
-			return err
-		}
+	page, err := t.Pager.ReadPage(pageNum)
 
-		node := NewNode(page)
-
-		if node.IsLeaf() {
-			err := t.deleteFromLeaf(node, currPageNum, key)
-
-			storage.ReleasePageBuffer(page)
-
-			return err
-		}
-
-		currPageNum = t.searchInternalNode(node, key)
-		storage.ReleasePageBuffer(page)
+	if err != nil {
+		return false, err
 	}
+
+	defer storage.ReleasePageBuffer(page)
+
+	node := NewNode(page)
+
+	// if is a leaf
+	if node.IsLeaf() {
+		if err := t.deleteFromLeaf(node, pageNum, key); err != nil {
+			return false, err
+		}
+		return node.NumCells() == 0, nil
+	}
+
+	//if internal node
+
+	childPage, childIdx := t.searchInternalNode(node, key)
+
+	childEmpty, err := t.deleteRecursive(childPage, key)
+
+	if err != nil {
+		return false, err
+	}
+
+	if !childEmpty {
+		return false, nil
+	}
+
+	t.deleteChildPointer(node, childIdx)
+
+	if err := t.Pager.WritePage(pageNum, node.bytes); err != nil {
+		return false, err
+	}
+
+	if node.NumCells() == 0 {
+		if pageNum != t.RootPage {
+			if err := t.Pager.FreePage(t.Header, pageNum); err != nil {
+				return false, err
+			}
+			return true, err
+		}
+	}
+
+	return false, nil
 }
 
 func (t *Btree) deleteFromLeaf(n *Node, pageId uint32, key uint64) error {
@@ -495,8 +530,31 @@ func (t *Btree) deleteFromLeaf(n *Node, pageId uint32, key uint64) error {
 	n.SetNumCells(numCells - 1)
 
 	if err := t.Pager.WritePage(pageId, n.bytes); err != nil {
-		return nil
+		return err
 	}
 
 	return nil
+}
+
+func (t *Btree) deleteChildPointer(n *Node, idx int) {
+	numCells := n.NumCells()
+
+	if idx == -1 {
+		if numCells == 0 {
+			return
+		}
+
+		last := numCells - 1
+		_, newRight := n.GetInternalCell(last)
+		n.SetRightChild(newRight)
+		n.SetNumCells(last)
+		return
+	}
+
+	start := 12 + (idx * INTERNAL_CELL_SIZE)
+	end := 12 + ((idx + 1) * INTERNAL_CELL_SIZE)
+	total := 12 + (numCells * INTERNAL_CELL_SIZE)
+
+	copy(n.bytes[start:], n.bytes[end:total])
+	n.SetNumCells(numCells - 1)
 }

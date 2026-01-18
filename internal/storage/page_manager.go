@@ -88,6 +88,9 @@ func (p *Pager) AllocatePage(h *DBHeader) (uint32, error) {
 }
 
 func (p *Pager) FreePage(h *DBHeader, pageNum uint32) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
 	buff := GetBuff()
 	defer ReleasePageBuffer(buff)
 	binary.LittleEndian.PutUint32(buff[0:4], h.FreeList)
