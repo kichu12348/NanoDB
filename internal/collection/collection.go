@@ -107,7 +107,7 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 	}
 
 	c.mu.Lock()
-	err = c.insertDocInternal(docId, data)
+	err, _, _ = c.insertDocInternal(docId, data)
 	c.mu.Unlock()
 
 	if err != nil {
@@ -121,92 +121,6 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 	}
 
 	return docId, nil
-}
-
-func (c *Collection) InsertWithId(doc map[string]any, docId uint64) error {
-	c.mu.Lock()         // lock for writing
-	defer c.mu.Unlock() // unlock after function ends
-
-	data, err := record.EncodeDoc(doc)
-
-	if err != nil {
-		return err
-	}
-
-	currentPageId := c.LastPage
-
-	for {
-		//read the current page
-		pageData, err := c.Pager.ReadPage(currentPageId)
-		if err != nil {
-			return err
-		}
-
-		//try to insert the record
-		success, err := record.InsertRecord(pageData, docId, data)
-		if err != nil {
-			storage.ReleasePageBuffer(pageData)
-			return err
-		}
-
-		if success {
-			//update index
-			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
-
-			err := c.BTree.Insert(docId, currentPageId, slotCount-1)
-			if err != nil {
-				storage.ReleasePageBuffer(pageData)
-				return err
-			}
-
-			// write back the page if insertion successful
-			err = c.Pager.WritePage(currentPageId, pageData)
-			storage.ReleasePageBuffer(pageData)
-			return err
-		}
-
-		//move to next page if insertion failed
-		nextPage := binary.LittleEndian.Uint32(pageData[4:8])
-		if nextPage != 0 {
-			// if there is a next page in chain, move to it
-			currentPageId = nextPage
-			storage.ReleasePageBuffer(pageData)
-			continue
-		}
-
-		// allocate a new page if no next page
-
-		newPageId, err := c.Pager.AllocatePage(c.Header)
-
-		if err != nil {
-			storage.ReleasePageBuffer(pageData)
-			return err
-		}
-
-		newPageData := storage.GetBuff()
-		storage.InitDataPage(newPageData)
-
-		if err := c.Pager.WritePage(newPageId, newPageData); err != nil {
-			storage.ReleasePageBuffer(newPageData)
-			storage.ReleasePageBuffer(pageData)
-			return err
-		}
-
-		//link old page to new page
-		binary.LittleEndian.PutUint32(pageData[4:8], newPageId)
-		if err := c.Pager.WritePage(currentPageId, pageData); err != nil {
-			storage.ReleasePageBuffer(pageData)
-			storage.ReleasePageBuffer(newPageData)
-			return err
-		}
-
-		storage.ReleasePageBuffer(pageData)
-		storage.ReleasePageBuffer(newPageData)
-
-		c.LastPage = newPageId
-
-		currentPageId = newPageId
-	}
 }
 
 func (c *Collection) InsertMany(docs []map[string]any) (*[]uint64, error) {
@@ -253,6 +167,12 @@ func (c *Collection) InsertMany(docs []map[string]any) (*[]uint64, error) {
 
 		isDirty := false
 
+		type PendingIndexUpdate struct {
+			docId uint64
+			slot  uint16
+		}
+		var batchUpdates []PendingIndexUpdate
+
 		for i < docLen {
 			doc := docs[i]
 			docId := docIds[i]
@@ -280,14 +200,7 @@ func (c *Collection) InsertMany(docs []map[string]any) (*[]uint64, error) {
 			isDirty = true
 
 			slotCount := binary.LittleEndian.Uint16(page[0:2])
-
-			err = c.BTree.Insert(docId, currentPageId, slotCount-1)
-
-			if err != nil {
-				storage.ReleasePageBuffer(page)
-				c.mu.Unlock()
-				return &[]uint64{}, err
-			}
+			batchUpdates = append(batchUpdates, PendingIndexUpdate{docId: docId, slot: slotCount - 1})
 
 			i++
 		}
@@ -295,6 +208,14 @@ func (c *Collection) InsertMany(docs []map[string]any) (*[]uint64, error) {
 
 		if isDirty {
 			if err := c.Pager.WritePage(currentPageId, page); err != nil {
+				storage.ReleasePageBuffer(page)
+				c.mu.Unlock()
+				return &[]uint64{}, err
+			}
+		}
+
+		for _, update := range batchUpdates {
+			if err := c.BTree.Insert(update.docId, currentPageId, update.slot); err != nil {
 				storage.ReleasePageBuffer(page)
 				c.mu.Unlock()
 				return &[]uint64{}, err
@@ -400,8 +321,21 @@ func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 		//if update successful, write back and update index
 		if success {
 
+			if err := c.Pager.WritePage(currPageId, pageData); err != nil {
+				storage.ReleasePageBuffer(pageData)
+				return err
+			}
+
+			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
+
+			if err := c.BTree.Update(id, currPageId, slotCount-1); err != nil {
+				storage.ReleasePageBuffer(pageData)
+				return err
+			}
+
 			if currPageId == res.PageNum {
 				record.MarkSlotDeleted(pageData, res.SlotNum)
+				c.Pager.WritePage(currPageId, pageData)
 			} else {
 				oldPageData, err := c.Pager.ReadPage(res.PageNum)
 				if err != nil {
@@ -414,20 +348,15 @@ func (c *Collection) UpdateById(id uint64, newData map[string]any) error {
 					storage.ReleasePageBuffer(pageData)
 					return err
 				}
+
+				storage.ReleasePageBuffer(oldPageData)
 			}
 
-			slotCount := binary.LittleEndian.Uint16(pageData[0:2])
-
-			if err := c.BTree.Update(id, currPageId, slotCount-1); err != nil {
-				storage.ReleasePageBuffer(pageData)
-				return err
-			}
 			c.LastPage = currPageId
-			err := c.Pager.WritePage(currPageId, pageData)
 
 			storage.ReleasePageBuffer(pageData)
 
-			return err
+			return nil
 		}
 
 		// move to next page if update failed

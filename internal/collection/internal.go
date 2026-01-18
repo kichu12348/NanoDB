@@ -7,21 +7,21 @@ import (
 	"nanodb/internal/storage"
 )
 
-func (c *Collection) insertDocInternal(docId uint64, data []byte) error {
+func (c *Collection) insertDocInternal(docId uint64, data []byte) (error, uint32, uint16) {
 	currentPageId := c.LastPage
 
 	for {
 		//read the current page
 		pageData, err := c.Pager.ReadPage(currentPageId)
 		if err != nil {
-			return err
+			return err, 0, 0
 		}
 
 		//try to insert the record
 		success, err := record.InsertRecord(pageData, docId, data)
 		if err != nil {
 			storage.ReleasePageBuffer(pageData)
-			return err
+			return err, 0, 0
 		}
 
 		if success {
@@ -31,13 +31,13 @@ func (c *Collection) insertDocInternal(docId uint64, data []byte) error {
 			err := c.BTree.Insert(docId, currentPageId, slotCount-1)
 			if err != nil {
 				storage.ReleasePageBuffer(pageData)
-				return err
+				return err, 0, 0
 			}
 
 			// write back the page if insertion successful
 			err = c.Pager.WritePage(currentPageId, pageData)
 			storage.ReleasePageBuffer(pageData)
-			return err
+			return err, currentPageId, slotCount - 1
 		}
 
 		//move to next page if insertion failed
@@ -52,7 +52,7 @@ func (c *Collection) insertDocInternal(docId uint64, data []byte) error {
 		newPageId, err := c.Pager.AllocatePage(c.Header)
 		if err != nil {
 			storage.ReleasePageBuffer(pageData)
-			return err
+			return err, 0, 0
 		}
 
 		newPageData := storage.GetBuff()
@@ -61,7 +61,7 @@ func (c *Collection) insertDocInternal(docId uint64, data []byte) error {
 		if err := c.Pager.WritePage(newPageId, newPageData); err != nil {
 			storage.ReleasePageBuffer(newPageData)
 			storage.ReleasePageBuffer(pageData)
-			return err
+			return err, 0, 0
 		}
 
 		//link old page to new page
@@ -69,7 +69,7 @@ func (c *Collection) insertDocInternal(docId uint64, data []byte) error {
 		if err := c.Pager.WritePage(currentPageId, pageData); err != nil {
 			storage.ReleasePageBuffer(pageData)
 			storage.ReleasePageBuffer(newPageData)
-			return err
+			return err, 0, 0
 		}
 
 		storage.ReleasePageBuffer(pageData)

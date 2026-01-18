@@ -168,7 +168,9 @@ func (c *Collection) saveBuckets() error {
 
 	c.deleteDocInternal(1)
 
-	return c.insertDocInternal(1, data)
+	err, _, _ = c.insertDocInternal(1, data)
+
+	return err
 }
 
 func (c *Collection) SearchVector(query []float32, topK int) ([]uint64, error) {
