@@ -250,3 +250,75 @@ func (c *Collection) SearchVector(query []float32, topK int) ([]uint64, error) {
 
 	return finalIds, nil
 }
+
+func (c *Collection) LoadVectorIndex() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	doc, err := c.FindById(1)
+	if err != nil {
+		return err
+	}
+
+	if doc == nil {
+		return nil
+	}
+
+	rawBuckets, ok := doc["buckets"].([]interface{})
+
+	if !ok {
+		return nil
+	}
+
+	for _, item := range rawBuckets {
+		bMap := item.(map[string]interface{})
+
+		root := uint32(convertToFloat(bMap["root"]))
+
+		rawVec := bMap["centroid"].([]interface{})
+		centroid := make([]float32, len(rawVec))
+
+		for i, val := range rawVec {
+			centroid[i] = float32(convertToFloat(val))
+		}
+
+		c.Buckets = append(c.Buckets, Bucket{
+			RootPage: root,
+			Centroid: centroid,
+		})
+	}
+
+	return nil
+}
+
+func convertToInt(v interface{}) uint32 {
+	switch t := v.(type) {
+	case uint32:
+		return t
+	case int:
+		return uint32(t)
+	case int64:
+		return uint32(t)
+	case uint64:
+		return uint32(t)
+	case float64:
+		return uint32(t) // JSON often makes everything float64
+	case int8:
+		return uint32(t)
+	default:
+		return 0
+	}
+}
+
+func convertToFloat(v interface{}) float64 {
+	switch t := v.(type) {
+	case float32:
+		return float64(t)
+	case float64:
+		return t
+	case int:
+		return float64(t)
+	default:
+		return 0.0
+	}
+}

@@ -98,6 +98,7 @@ func loadExistingCollectionsInternal() {
 		if err != nil {
 			continue
 		}
+		loadedCol.LoadVectorIndex()
 		openCollections[col.Name] = loadedCol
 	}
 }
@@ -346,6 +347,36 @@ func NanoFindOne(colName *C.char, queryJson *C.char) *C.char {
 		return nil
 	}
 	bytes, _ := json.Marshal(doc)
+	return C.CString(string(bytes))
+}
+
+//export NanoVectorSearch
+func NanoVectorSearch(colName *C.char, queryJson *C.char, topK C.longlong) *C.char {
+	cName := C.GoString(colName)
+
+	globalMu.RLock()
+	col, ok := openCollections[cName]
+	globalMu.RUnlock()
+
+	if !ok {
+		return nil
+	}
+
+	qStr := C.GoString(queryJson)
+	var query []float32
+
+	if err := json.Unmarshal([]byte(qStr), &query); err != nil {
+		return nil
+	}
+
+	ids, err := col.SearchVector(query, int(topK))
+
+	if err != nil {
+		return nil
+	}
+
+	bytes, _ := json.Marshal(ids)
+
 	return C.CString(string(bytes))
 }
 

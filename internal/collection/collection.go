@@ -92,6 +92,18 @@ func (c *Collection) Insert(doc map[string]any) (uint64, error) {
 
 	data, err := record.EncodeDoc(doc)
 
+	var embedding []float32
+	if val, ok := doc["_embeddings"]; ok {
+		if vecInterface, ok := val.([]any); ok {
+			embedding = make([]float32, len(vecInterface))
+			for i, v := range vecInterface {
+				embedding[i] = float32(convertToFloat(v))
+			}
+		}
+
+		delete(doc, "_embeddings")
+	}
+
 	if err != nil {
 		return 0, err
 	}
