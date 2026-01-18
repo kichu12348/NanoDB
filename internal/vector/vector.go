@@ -29,5 +29,5 @@ func VectorFromBytes(data []byte) []float32 {
 
 func InitVectorPage(data []byte) {
 	binary.LittleEndian.PutUint32(data[0:4], 0)
-	binary.LittleEndian.AppendUint16(data[4:6], 0)
+	binary.LittleEndian.PutUint16(data[4:6], 0)
 }

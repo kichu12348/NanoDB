@@ -183,7 +183,7 @@ func (c *Collection) SearchVector(query []float32, topK int) ([]uint64, error) {
 	bestBucket := c.Buckets[0]
 
 	for _, b := range c.Buckets {
-		d := vector.Dist(query, bestBucket.Centroid)
+		d := vector.Dist(query, b.Centroid)
 
 		if d < bestDist {
 			bestDist = d
