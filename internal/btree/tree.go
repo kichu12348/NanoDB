@@ -449,8 +449,6 @@ func (t *Btree) deleteRecursive(pageNum uint32, key uint64) (bool, error) {
 		return false, err
 	}
 
-	defer storage.ReleasePageBuffer(page)
-
 	node := NewNode(page)
 
 	// if is a leaf
@@ -458,36 +456,42 @@ func (t *Btree) deleteRecursive(pageNum uint32, key uint64) (bool, error) {
 		if err := t.deleteFromLeaf(node, pageNum, key); err != nil {
 			return false, err
 		}
-		return node.NumCells() == 0, nil
+		isUnderFlow := node.NumCells() < MIN_LEAF_CELLS && pageNum != t.RootPage
+		storage.ReleasePageBuffer(page)
+		return isUnderFlow, nil
 	}
 
 	//if internal node
 
 	childPage, childIdx := t.searchInternalNode(node, key)
 
-	childEmpty, err := t.deleteRecursive(childPage, key)
+	storage.ReleasePageBuffer(page)
+
+	childUnderFlow, err := t.deleteRecursive(childPage, key)
 
 	if err != nil {
 		return false, err
 	}
 
-	if !childEmpty {
-		return false, nil
-	}
+	if childUnderFlow {
+		page, err := t.Pager.ReadPage(pageNum)
 
-	t.deleteChildPointer(node, childIdx)
-
-	if err := t.Pager.WritePage(pageNum, node.bytes); err != nil {
-		return false, err
-	}
-
-	if node.NumCells() == 0 {
-		if pageNum != t.RootPage {
-			if err := t.Pager.FreePage(t.Header, pageNum); err != nil {
-				return false, err
-			}
-			return true, err
+		if err != nil {
+			return false, err
 		}
+		node := NewNode(page)
+
+		err = t.handleUnderFlow(node, pageNum, childIdx)
+
+		if err != nil {
+			storage.ReleasePageBuffer(page)
+			return false, err
+		}
+
+		isUnderFlow := node.NumCells() < MAX_INTERNAL_CELLS && pageNum != t.RootPage
+		storage.ReleasePageBuffer(page)
+
+		return isUnderFlow, nil
 	}
 
 	return false, nil
@@ -557,4 +561,256 @@ func (t *Btree) deleteChildPointer(n *Node, idx int) {
 
 	copy(n.bytes[start:], n.bytes[end:total])
 	n.SetNumCells(numCells - 1)
+}
+
+func (t *Btree) handleUnderFlow(parent *Node, parentPageId uint32, childIdx int) error {
+	if childIdx > 0 {
+		if t.tryBorrowLeft(parent, childIdx) {
+			return t.Pager.WritePage(parentPageId, parent.bytes)
+		}
+	}
+
+	if childIdx < int(parent.NumCells()) {
+		if t.tryBorrowRight(parent, childIdx) {
+			return t.Pager.WritePage(parentPageId, parent.bytes)
+		}
+	}
+
+	if childIdx > 0 {
+		return t.merge(parent, parentPageId, childIdx-1, childIdx)
+	}
+
+	return t.merge(parent, parentPageId, childIdx, childIdx+1)
+}
+
+func (t *Btree) tryBorrowLeft(parent *Node, childIdx int) bool {
+	if childIdx == 0 {
+		return false
+	}
+
+	var leftPageId uint32
+	var childPageId uint32
+
+	seperatorIdx := childIdx - 1
+
+	if childIdx == int(parent.NumCells()) {
+		_, leftPageId = parent.GetInternalCell(uint16(seperatorIdx))
+		childPageId = parent.RightChild()
+	} else {
+		_, childPageId = parent.GetInternalCell(uint16(childIdx))
+		_, leftPageId = parent.GetInternalCell(uint16(childIdx - 1))
+	}
+
+	leftPage, err := t.Pager.ReadPage(leftPageId)
+	if err != nil {
+		return false
+	}
+	defer storage.ReleasePageBuffer(leftPage)
+
+	childPage, err := t.Pager.ReadPage(childPageId)
+	if err != nil {
+		return false
+	}
+	defer storage.ReleasePageBuffer(childPage)
+
+	leftNode := NewNode(leftPage)
+	childNode := NewNode(childPage)
+
+	if leftNode.NumCells() <= MIN_LEAF_CELLS {
+		return false
+	}
+
+	if childNode.IsLeaf() {
+		lastIdx := leftNode.NumCells() - 1
+		borrowKey, borrowPage, borrowSlot := leftNode.GetLeafCell(lastIdx)
+
+		childNode.InsertLeafCell(0, borrowKey, borrowPage, borrowSlot)
+
+		leftNode.SetNumCells(lastIdx)
+
+		offset := 12 + (seperatorIdx * INTERNAL_CELL_SIZE)
+		binary.LittleEndian.PutUint64(parent.bytes[offset:offset+8], borrowKey)
+	} else {
+		sepKey, _ := parent.GetInternalCell(uint16(seperatorIdx))
+
+		lastIdx := leftNode.NumCells() - 1
+		kLast, pLast := leftNode.GetInternalCell(lastIdx)
+
+		ptrMove := leftNode.RightChild()
+
+		childNode.InsertInternalCell(0, sepKey, ptrMove)
+
+		offset := 12 + (seperatorIdx * INTERNAL_CELL_SIZE)
+		binary.LittleEndian.PutUint64(parent.bytes[offset:offset+8], kLast)
+
+		leftNode.SetRightChild(pLast)
+		leftNode.SetNumCells(lastIdx)
+	}
+
+	if err := t.Pager.WritePage(leftPageId, leftNode.bytes); err != nil {
+		return false
+	}
+	if err := t.Pager.WritePage(childPageId, childNode.bytes); err != nil {
+		return false
+	}
+
+	return true
+}
+
+func (t *Btree) tryBorrowRight(parent *Node, childIdx int) bool {
+	if childIdx == -1 || childIdx >= int(parent.NumCells()) {
+		return false
+	}
+
+	seperatorIdx := uint16(childIdx)
+
+	_, childPageId := parent.GetInternalCell(uint16(childIdx))
+
+	var rightPageId uint32
+	if childIdx == int(parent.NumCells()-1) {
+		rightPageId = parent.RightChild()
+	} else {
+		_, rightPageId = parent.GetInternalCell(uint16(childIdx + 1))
+	}
+
+	childPage, err := t.Pager.ReadPage(childPageId)
+	if err != nil {
+		return false
+	}
+	defer storage.ReleasePageBuffer(childPage)
+
+	rightPage, err := t.Pager.ReadPage(rightPageId)
+	if err != nil {
+		return false
+	}
+	defer storage.ReleasePageBuffer(rightPage)
+
+	childNode := NewNode(childPage)
+	rightNode := NewNode(rightPage)
+
+	if rightNode.NumCells() <= MAX_LEAF_CELLS {
+		return false
+	}
+
+	if childNode.IsLeaf() {
+		borrowKey, borrowPage, borrowSlot := rightNode.GetLeafCell(0)
+
+		childNode.InsertLeafCell(childNode.NumCells(), borrowKey, borrowPage, borrowSlot)
+
+		rightCount := rightNode.NumCells()
+		start := 12
+		end := 12 + LEAF_CELL_SIZE
+		total := 12 + (rightCount * LEAF_CELL_SIZE)
+		copy(rightNode.bytes[start:], rightNode.bytes[end:total])
+		rightNode.SetNumCells(rightCount - 1)
+
+		newSeperatorKey, _, _ := rightNode.GetLeafCell(0)
+
+		offset := 12 + (seperatorIdx * LEAF_CELL_SIZE)
+		binary.LittleEndian.PutUint64(parent.bytes[offset:offset+8], newSeperatorKey)
+	} else {
+		sepKey, _ := parent.GetInternalCell(seperatorIdx)
+
+		rightKey, rightChildPtr := rightNode.GetInternalCell(0)
+
+		oldRightChild := childNode.RightChild()
+		childNode.InsertInternalCell(childNode.NumCells(), sepKey, oldRightChild)
+
+		childNode.SetRightChild(rightChildPtr)
+
+		offset := 12 + (seperatorIdx * LEAF_CELL_SIZE)
+		binary.LittleEndian.PutUint64(parent.bytes[offset:offset+8], rightKey)
+
+		t.deleteChildPointer(rightNode, 0)
+	}
+
+	if err := t.Pager.WritePage(childPageId, childNode.bytes); err != nil {
+		return false
+	}
+	if err := t.Pager.WritePage(rightPageId, rightNode.bytes); err != nil {
+		return false
+	}
+
+	return true
+}
+
+func (t *Btree) merge(parent *Node, parentPageId uint32, leftIdx int, rightIdx int) error {
+	var leftPageId uint32
+	var rightPageId uint32
+	var separatorIdx = leftIdx
+
+	_, leftPageId = parent.GetInternalCell(uint16(leftIdx))
+
+	if rightIdx == int(parent.NumCells()) {
+		rightPageId = parent.RightChild()
+	} else {
+		_, rightPageId = parent.GetInternalCell(uint16(rightIdx))
+	}
+
+	leftPage, err := t.Pager.ReadPage(leftPageId)
+	if err != nil {
+		return err
+	}
+
+	rightPage, err := t.Pager.ReadPage(rightPageId)
+	if err != nil {
+		storage.ReleasePageBuffer(leftPage)
+		return err
+	}
+
+	leftNode := NewNode(leftPage)
+	rightNode := NewNode(rightPage)
+
+	if leftNode.IsLeaf() {
+		leftCount := leftNode.NumCells()
+		for i := range rightNode.NumCells() {
+			k, p, s := rightNode.GetLeafCell(i)
+			leftNode.InsertLeafCell(leftCount, k, p, s)
+			leftCount++
+		}
+
+		leftNode.SetRightChild(rightNode.RightChild())
+	} else {
+		sepKey, _ := parent.GetInternalCell(uint16(separatorIdx))
+
+		ptrFromLeft := leftNode.RightChild()
+
+		leftNode.InsertInternalCell(leftNode.NumCells(), sepKey, ptrFromLeft)
+
+		leftCount := leftNode.NumCells()
+		for i := range rightNode.NumCells() {
+			k, p := rightNode.GetInternalCell(i)
+			leftNode.InsertInternalCell(leftCount, k, p)
+			leftCount++
+		}
+
+		leftNode.SetRightChild(rightNode.RightChild())
+	}
+
+	if err := t.Pager.WritePage(leftPageId, leftNode.bytes); err != nil {
+		storage.ReleasePageBuffer(leftPage)
+		storage.ReleasePageBuffer(rightPage)
+		return err
+	}
+
+	// 4. Free Right Node
+	if err := t.Pager.FreePage(t.Header, rightPageId); err != nil {
+		storage.ReleasePageBuffer(leftPage)
+		storage.ReleasePageBuffer(rightPage)
+		return err
+	}
+
+	storage.ReleasePageBuffer(leftPage)
+	storage.ReleasePageBuffer(rightPage)
+
+	t.deleteChildPointer(parent, leftIdx)
+
+	if leftIdx == int(parent.NumCells()) {
+		parent.SetRightChild(leftPageId)
+	} else {
+		offset := 12 + (leftIdx * INTERNAL_CELL_SIZE)
+		binary.LittleEndian.PutUint32(parent.bytes[offset+8:offset+12], leftPageId)
+	}
+
+	return t.Pager.WritePage(parentPageId, parent.bytes)
 }
