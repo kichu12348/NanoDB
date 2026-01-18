@@ -438,7 +438,31 @@ func (t *Btree) updateLeafNode(n *Node, key uint64, pageId uint32, recPage uint3
 
 func (t *Btree) Delete(key uint64) error {
 	_, err := t.deleteRecursive(t.RootPage, key)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// Check if Root needs to shrink
+	rootPage, err := t.Pager.ReadPage(t.RootPage)
+	if err != nil {
+		return err
+	}
+	rootNode := NewNode(rootPage)
+
+	if !rootNode.IsLeaf() && rootNode.NumCells() == 0 {
+		newRoot := rootNode.RightChild()
+
+		oldRootId := t.RootPage
+		if err := t.Pager.FreePage(t.Header, oldRootId); err != nil {
+			storage.ReleasePageBuffer(rootPage)
+			return err
+		}
+
+		t.RootPage = newRoot
+	}
+	storage.ReleasePageBuffer(rootPage)
+
+	return nil
 }
 
 func (t *Btree) deleteRecursive(pageNum uint32, key uint64) (bool, error) {
@@ -688,7 +712,12 @@ func (t *Btree) tryBorrowRight(parent *Node, childIdx int) bool {
 	childNode := NewNode(childPage)
 	rightNode := NewNode(rightPage)
 
-	if rightNode.NumCells() <= MAX_LEAF_CELLS {
+	minCells := MIN_LEAF_CELLS
+	if !rightNode.IsLeaf() {
+		minCells = MIN_INTERNAL_CELLS
+	}
+
+	if rightNode.NumCells() <= uint16(minCells) {
 		return false
 	}
 
@@ -706,7 +735,7 @@ func (t *Btree) tryBorrowRight(parent *Node, childIdx int) bool {
 
 		newSeperatorKey, _, _ := rightNode.GetLeafCell(0)
 
-		offset := 12 + (seperatorIdx * LEAF_CELL_SIZE)
+		offset := 12 + (seperatorIdx * INTERNAL_CELL_SIZE)
 		binary.LittleEndian.PutUint64(parent.bytes[offset:offset+8], newSeperatorKey)
 	} else {
 		sepKey, _ := parent.GetInternalCell(seperatorIdx)
@@ -718,7 +747,7 @@ func (t *Btree) tryBorrowRight(parent *Node, childIdx int) bool {
 
 		childNode.SetRightChild(rightChildPtr)
 
-		offset := 12 + (seperatorIdx * LEAF_CELL_SIZE)
+		offset := 12 + (seperatorIdx * INTERNAL_CELL_SIZE)
 		binary.LittleEndian.PutUint64(parent.bytes[offset:offset+8], rightKey)
 
 		t.deleteChildPointer(rightNode, 0)
