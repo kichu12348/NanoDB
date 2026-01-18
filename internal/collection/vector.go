@@ -3,6 +3,7 @@ package collection
 import (
 	"encoding/binary"
 	"math"
+	"nanodb/internal/record"
 	"nanodb/internal/storage"
 	"nanodb/internal/vector"
 )
@@ -159,18 +160,15 @@ func (c *Collection) saveBuckets() error {
 		"buckets": bucketList,
 	}
 
-	exist, err := c.FindById(1)
+	data, err := record.EncodeDoc(configDoc)
 
 	if err != nil {
 		return err
 	}
 
-	if exist == nil {
-		return c.InsertWithId(configDoc, 1)
-	} else {
-		c.DeleteById(1)
-		return c.InsertWithId(configDoc, 1)
-	}
+	c.deleteDocInternal(1)
+
+	return c.insertDocInternal(1, data)
 }
 
 func (c *Collection) SearchVector(query []float32, topK int) ([]uint64, error) {
@@ -271,11 +269,11 @@ func (c *Collection) LoadVectorIndex() error {
 	}
 
 	for _, item := range rawBuckets {
-		bMap := item.(map[string]interface{})
+		bMap := item.(map[string]any)
 
-		root := uint32(convertToFloat(bMap["root"]))
+		root := uint32(convertToInt(bMap["root"]))
 
-		rawVec := bMap["centroid"].([]interface{})
+		rawVec := bMap["centroid"].([]any)
 		centroid := make([]float32, len(rawVec))
 
 		for i, val := range rawVec {
@@ -291,7 +289,7 @@ func (c *Collection) LoadVectorIndex() error {
 	return nil
 }
 
-func convertToInt(v interface{}) uint32 {
+func convertToInt(v any) uint32 {
 	switch t := v.(type) {
 	case uint32:
 		return t
