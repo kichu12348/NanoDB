@@ -359,35 +359,7 @@ func (c *Collection) FindById(docId uint64) (map[string]any, error) {
 	c.mu.RLock()         // lock for reading
 	defer c.mu.RUnlock() // unlock after function ends
 
-	res, err := c.BTree.SearchKey(docId)
-
-	if err != nil {
-		return nil, err
-	}
-
-	if !res.Found {
-		return nil, nil
-	}
-
-	pageData, err := c.Pager.ReadPage(res.PageNum)
-	if err != nil {
-		return nil, err
-	}
-
-	defer storage.ReleasePageBuffer(pageData)
-
-	_, data, deleted := record.ReadRecord(pageData, res.SlotNum)
-
-	if deleted {
-		return nil, nil
-	}
-
-	doc, err := record.DecodeDoc(data)
-	if err != nil {
-		return nil, err
-	}
-
-	return doc, nil
+	return c.findByIdInternal(docId)
 }
 
 func (c *Collection) UpdateById(id uint64, newData map[string]any) error {

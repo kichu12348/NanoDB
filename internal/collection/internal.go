@@ -106,3 +106,35 @@ func (c *Collection) deleteDocInternal(id uint64) error {
 
 	return c.BTree.Delete(id)
 }
+
+func (c *Collection) findByIdInternal(docId uint64) (map[string]any, error) {
+	res, err := c.BTree.SearchKey(docId)
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !res.Found {
+		return nil, nil
+	}
+
+	pageData, err := c.Pager.ReadPage(res.PageNum)
+	if err != nil {
+		return nil, err
+	}
+
+	defer storage.ReleasePageBuffer(pageData)
+
+	_, data, deleted := record.ReadRecord(pageData, res.SlotNum)
+
+	if deleted {
+		return nil, nil
+	}
+
+	doc, err := record.DecodeDoc(data)
+	if err != nil {
+		return nil, err
+	}
+
+	return doc, nil
+}

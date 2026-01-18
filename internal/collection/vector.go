@@ -253,7 +253,7 @@ func (c *Collection) LoadVectorIndex() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	doc, err := c.FindById(1)
+	doc, err := c.findByIdInternal(1)
 	if err != nil {
 		return err
 	}
