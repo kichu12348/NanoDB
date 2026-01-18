@@ -627,10 +627,12 @@ func (c *Collection) SyncCatalog() error {
 	}
 	defer storage.ReleasePageBuffer(page)
 
-	offset := 8 + metaData.Slot*4 // [name length (1 byte), name (n bytes), root page (4 bytes), index page (4 bytes)]
+	offset := 8 + metaData.Slot*4 // [offset 2] [length 2]
+
+	recordOffset := binary.LittleEndian.Uint16(page[offset : offset+2])
 
 	entry := record.EncodeCollectionEntry(c.Name, c.RootPage, c.BTree.RootPage)
-	copy(page[offset:], entry)
+	copy(page[recordOffset+12:], entry)
 
 	return c.Pager.WritePage(metaData.PageId, page)
 }
