@@ -1,6 +1,7 @@
 package collection
 
 import (
+	"container/heap"
 	"encoding/binary"
 	"math"
 	"nanodb/internal/record"
@@ -8,7 +9,32 @@ import (
 	"nanodb/internal/vector"
 )
 
-const MAX_BUCKETS = 10
+const MAX_BUCKETS = 256
+
+type SearchResult struct {
+	DocId uint64
+	Dist  float32
+}
+
+type ResultHeap []SearchResult
+
+func (h ResultHeap) Len() int { return len(h) }
+func (h ResultHeap) Less(i, j int) bool {
+	return h[i].Dist > h[j].Dist
+}
+func (h ResultHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+
+func (h *ResultHeap) Push(x any) {
+	*h = append(*h, x.(SearchResult))
+}
+
+func (h *ResultHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
 
 func (c *Collection) InsertVector(docId uint64, v []float32) error {
 	c.mu.Lock()
@@ -143,7 +169,7 @@ func (c *Collection) saveBuckets() error {
 	var bucketList []map[string]any
 
 	for _, b := range c.Buckets {
-		centroidInterface := make([]interface{}, len(b.Centroid))
+		centroidInterface := make([]any, len(b.Centroid))
 		for i, v := range b.Centroid {
 			centroidInterface[i] = v
 		}
@@ -193,12 +219,8 @@ func (c *Collection) SearchVector(query []float32, topK int) ([]uint64, error) {
 		}
 	}
 
-	var results []struct {
-		id   uint64
-		dist float32
-	}
-
-	resLen := 0
+	results := &ResultHeap{}
+	heap.Init(results)
 
 	currPageId := bestBucket.RootPage
 
@@ -223,29 +245,29 @@ func (c *Collection) SearchVector(query []float32, topK int) ([]uint64, error) {
 
 			vec := vector.VectorFromBytes(vecBytes)
 			d := vector.Dist(query, vec)
-			results = append(results, struct {
-				id   uint64
-				dist float32
-			}{docId, d})
 
-			resLen++
+			if results.Len() < topK {
+				heap.Push(results, SearchResult{
+					DocId: docId,
+					Dist:  d,
+				})
+			} else if d < (*results)[0].Dist {
+				heap.Pop(results)
+				heap.Push(results, SearchResult{
+					DocId: docId,
+					Dist:  d,
+				})
+			}
 		}
 
 		currPageId = binary.LittleEndian.Uint32(pageData[0:4])
 		storage.ReleasePageBuffer(pageData)
 	}
 
-	for i := range resLen {
-		for j := range resLen - i - 1 {
-			if results[j].dist > results[j+1].dist {
-				results[j], results[j+1] = results[j+1], results[j]
-			}
-		}
-	}
-
-	finalIds := make([]uint64, 0)
-	for i := 0; i < resLen && i < topK; i++ {
-		finalIds = append(finalIds, results[i].id)
+	finalIds := make([]uint64, results.Len())
+	for i := results.Len() - 1; i >= 0; i-- {
+		sr := heap.Pop(results).(SearchResult)
+		finalIds[i] = sr.DocId
 	}
 
 	return finalIds, nil
@@ -264,7 +286,7 @@ func (c *Collection) LoadVectorIndex() error {
 		return nil
 	}
 
-	rawBuckets, ok := doc["buckets"].([]interface{})
+	rawBuckets, ok := doc["buckets"].([]any)
 
 	if !ok {
 		return nil
@@ -275,7 +297,7 @@ func (c *Collection) LoadVectorIndex() error {
 
 		root := uint32(convertToInt(bMap["root"]))
 
-		rawVec := bMap["centroid"].([]any)
+		rawVec := bMap["vec"].([]any)
 		centroid := make([]float32, len(rawVec))
 
 		for i, val := range rawVec {
@@ -310,7 +332,7 @@ func convertToInt(v any) uint32 {
 	}
 }
 
-func convertToFloat(v interface{}) float64 {
+func convertToFloat(v any) float64 {
 	switch t := v.(type) {
 	case float32:
 		return float64(t)
