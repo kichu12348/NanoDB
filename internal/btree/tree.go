@@ -512,7 +512,7 @@ func (t *Btree) deleteRecursive(pageNum uint32, key uint64) (bool, error) {
 			return false, err
 		}
 
-		isUnderFlow := node.NumCells() < MAX_INTERNAL_CELLS && pageNum != t.RootPage
+		isUnderFlow := node.NumCells() < MIN_INTERNAL_CELLS && pageNum != t.RootPage
 		storage.ReleasePageBuffer(page)
 
 		return isUnderFlow, nil
@@ -640,7 +640,12 @@ func (t *Btree) tryBorrowLeft(parent *Node, childIdx int) bool {
 	leftNode := NewNode(leftPage)
 	childNode := NewNode(childPage)
 
-	if leftNode.NumCells() <= MIN_LEAF_CELLS {
+	minCells := MIN_LEAF_CELLS
+	if !leftNode.IsLeaf() {
+		minCells = MIN_INTERNAL_CELLS
+	}
+
+	if leftNode.NumCells() <= uint16(minCells) {
 		return false
 	}
 

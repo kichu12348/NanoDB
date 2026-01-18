@@ -15,16 +15,21 @@ type Bucket struct {
 	RootPage uint32
 }
 
+type CollectionLoc struct {
+	PageId uint32
+	Slot   uint16
+}
+
 type Collection struct {
-	Name           string
-	RootPage       uint32
-	LastPage       uint32
-	BucketMetaPage uint32
-	Buckets        []Bucket
-	Pager          *storage.Pager
-	Header         *storage.DBHeader
-	BTree          *btree.Btree
-	mu             sync.RWMutex
+	Name     string
+	RootPage uint32
+	LastPage uint32
+	MetaData CollectionLoc
+	Buckets  []Bucket
+	Pager    *storage.Pager
+	Header   *storage.DBHeader
+	BTree    *btree.Btree
+	mu       sync.RWMutex
 }
 
 type FindOptions struct {
@@ -32,15 +37,15 @@ type FindOptions struct {
 	Skip  uint
 }
 
-func NewCollection(name string, root uint32, indexRoot uint32, pager *storage.Pager, header *storage.DBHeader) (*Collection, error) {
+func NewCollection(colEnt *record.CollectionEntry, pager *storage.Pager, header *storage.DBHeader) (*Collection, error) {
 
 	b := &btree.Btree{
 		Pager:    pager,
 		Header:   header,
-		RootPage: indexRoot,
+		RootPage: colEnt.IndexRoot,
 	}
 
-	lastPage := root
+	lastPage := colEnt.RootPage
 	curr := lastPage
 
 	for curr != 0 {
@@ -61,8 +66,9 @@ func NewCollection(name string, root uint32, indexRoot uint32, pager *storage.Pa
 	}
 
 	return &Collection{
-		Name:     name,
-		RootPage: root,
+		Name:     colEnt.Name,
+		RootPage: colEnt.RootPage,
+		MetaData: CollectionLoc{PageId: colEnt.PageId, Slot: colEnt.Slot},
 		Pager:    pager,
 		Header:   header,
 		BTree:    b,
@@ -156,6 +162,7 @@ func (c *Collection) InsertMany(docs []map[string]any) (*[]uint64, error) {
 	docLen := len(docs)
 
 	currentPageId := c.LastPage
+	oldTreeRoot := c.BTree.RootPage
 	i := 0
 
 	for i < docLen {
@@ -220,6 +227,15 @@ func (c *Collection) InsertMany(docs []map[string]any) (*[]uint64, error) {
 				c.mu.Unlock()
 				return &[]uint64{}, err
 			}
+		}
+
+		if c.BTree.RootPage != oldTreeRoot {
+			if err := c.SyncCatalog(); err != nil {
+				storage.ReleasePageBuffer(page)
+				c.mu.Unlock()
+				return &[]uint64{}, err
+			}
+			oldTreeRoot = c.BTree.RootPage
 		}
 
 		if i >= docLen {
@@ -409,6 +425,7 @@ func (c *Collection) FindAndDelete(query map[string]any) (bool, error) {
 	defer c.mu.Unlock()
 
 	currentPageId := c.RootPage
+	oldTreeRoot := c.BTree.RootPage
 	for currentPageId != 0 {
 		pageData, err := c.Pager.ReadPage(currentPageId)
 
@@ -435,7 +452,18 @@ func (c *Collection) FindAndDelete(query map[string]any) (bool, error) {
 			if match(doc, query) {
 				isDirty = true
 				record.MarkSlotDeleted(pageData, slot)
-				c.BTree.Delete(docId)
+				err = c.BTree.Delete(docId)
+				if err != nil {
+					storage.ReleasePageBuffer(pageData)
+					return false, err
+				}
+				if c.BTree.RootPage != oldTreeRoot {
+					if err := c.SyncCatalog(); err != nil {
+						storage.ReleasePageBuffer(pageData)
+						return false, err
+					}
+					oldTreeRoot = c.BTree.RootPage
+				}
 			}
 		}
 		if isDirty {
@@ -588,4 +616,21 @@ func (c *Collection) FindOne(query map[string]any) (map[string]any, error) {
 	}
 
 	return nil, nil
+}
+
+func (c *Collection) SyncCatalog() error {
+	metaData := c.MetaData
+
+	page, err := c.Pager.ReadPage(metaData.PageId)
+	if err != nil {
+		return err
+	}
+	defer storage.ReleasePageBuffer(page)
+
+	offset := 8 + metaData.Slot*4 // [name length (1 byte), name (n bytes), root page (4 bytes), index page (4 bytes)]
+
+	entry := record.EncodeCollectionEntry(c.Name, c.RootPage, c.BTree.RootPage)
+	copy(page[offset:], entry)
+
+	return c.Pager.WritePage(metaData.PageId, page)
 }

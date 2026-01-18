@@ -75,8 +75,14 @@ func NanoInit(path *C.char) {
 
 	header = h
 
-	// Load Catalog
-	cat, err := collection.NewCollection("_catalog", 1, 0, pager, header) //collection insert bypasses the btree so this is fine
+	// Load Catalog "_catalog", 1, 0,
+	cat, err := collection.NewCollection(&record.CollectionEntry{
+		Name:      "_catalog",
+		RootPage:  1,
+		IndexRoot: 0,
+		PageId:    0,
+		Slot:      0,
+	}, pager, header) //collection insert bypasses the btree so this is fine
 	if err != nil {
 		panic(err)
 	}
@@ -94,7 +100,7 @@ func loadExistingCollectionsInternal() {
 	}
 
 	for _, col := range collections {
-		loadedCol, err := collection.NewCollection(col.Name, col.RootPage, col.IndexRoot, pager, header)
+		loadedCol, err := collection.NewCollection(&col, pager, header)
 		if err != nil {
 			continue
 		}
@@ -169,7 +175,14 @@ func NanoCreateCollection(colName *C.char) C.longlong {
 				storage.ReleasePageBuffer(page)
 				return -1
 			}
-			newCol, _ := collection.NewCollection(cName, newColPageNum, newIndexRootPage, pager, header)
+			slotCount := binary.LittleEndian.Uint16(page[0:2])
+			newCol, _ := collection.NewCollection(&record.CollectionEntry{
+				Name:      cName,
+				RootPage:  newColPageNum,
+				IndexRoot: newIndexRootPage,
+				PageId:    currentPageNum,
+				Slot:      slotCount - 1,
+			}, pager, header)
 			openCollections[cName] = newCol
 			storage.ReleasePageBuffer(page)
 			return 1

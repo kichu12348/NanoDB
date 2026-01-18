@@ -18,6 +18,8 @@ type CollectionEntry struct {
 	Name      string
 	RootPage  uint32
 	IndexRoot uint32
+	PageId    uint32
+	Slot      uint16
 }
 
 func isDeleted(len uint16) bool {
@@ -121,7 +123,7 @@ func DecodeCollectionEntry(data []byte) CollectionEntry {
 	name := string(data[1 : 1+nameLen])
 	root := binary.LittleEndian.Uint32(data[1+nameLen : 5+nameLen])
 	indexRoot := binary.LittleEndian.Uint32(data[5+nameLen:])
-	return CollectionEntry{name, root, indexRoot}
+	return CollectionEntry{Name: name, RootPage: root, IndexRoot: indexRoot}
 }
 
 func GetAllCollections(p *storage.Pager) ([]CollectionEntry, error) {
@@ -146,6 +148,8 @@ func GetAllCollections(p *storage.Pager) ([]CollectionEntry, error) {
 			// 2. Decode the specific CollectionEntry format
 			// [NameLen (1)] [Name] [RootPage (4)]
 			entry := DecodeCollectionEntry(data)
+			entry.PageId = currPageId
+			entry.Slot = slot
 			collections = append(collections, entry)
 		}
 

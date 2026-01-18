@@ -10,6 +10,8 @@ import (
 func (c *Collection) insertDocInternal(docId uint64, data []byte) (error, uint32, uint16) {
 	currentPageId := c.LastPage
 
+	oldTreeRoot := c.BTree.RootPage
+
 	for {
 		//read the current page
 		pageData, err := c.Pager.ReadPage(currentPageId)
@@ -32,6 +34,13 @@ func (c *Collection) insertDocInternal(docId uint64, data []byte) (error, uint32
 			if err != nil {
 				storage.ReleasePageBuffer(pageData)
 				return err, 0, 0
+			}
+
+			if c.BTree.RootPage != oldTreeRoot {
+				if err := c.SyncCatalog(); err != nil {
+					storage.ReleasePageBuffer(pageData)
+					return err, 0, 0
+				}
 			}
 
 			// write back the page if insertion successful
@@ -83,6 +92,8 @@ func (c *Collection) insertDocInternal(docId uint64, data []byte) (error, uint32
 func (c *Collection) deleteDocInternal(id uint64) error {
 	res, err := c.BTree.SearchKey(id)
 
+	oldTreeRoot := c.BTree.RootPage
+
 	if err != nil {
 		return err
 	}
@@ -104,7 +115,17 @@ func (c *Collection) deleteDocInternal(id uint64) error {
 		return err
 	}
 
-	return c.BTree.Delete(id)
+	err = c.BTree.Delete(id)
+
+	if err != nil {
+		return err
+	}
+
+	if c.BTree.RootPage != oldTreeRoot {
+		return c.SyncCatalog()
+	}
+
+	return nil
 }
 
 func (c *Collection) findByIdInternal(docId uint64) (map[string]any, error) {
